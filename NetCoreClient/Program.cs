@@ -1,7 +1,5 @@
 ﻿using Common;
-using System;
 using System.ServiceModel;
-using System.Threading.Tasks;
 
 namespace NetCoreClient
 {
@@ -58,19 +56,19 @@ namespace NetCoreClient
                 {
                     try
                     {
-                        channel.Open();
+                        channel?.Open();
                         var result = await Task.FromResult(client.Echo("Hello World via BasicHttp!"));
                         Console.WriteLine($"Response: {result}");
                     }
                     finally
                     {
-                        if (channel.State == CommunicationState.Opened)
+                        if (channel?.State == CommunicationState.Opened)
                         {
-                            channel.Close();
+                            channel?.Close();
                         }
                         else
                         {
-                            channel.Abort();
+                            channel?.Abort();
                         }
                     }
                 }
@@ -109,25 +107,25 @@ namespace NetCoreClient
                     {
                         try
                         {
-                            channel.Open();
+                            channel?.Open();
                             var result = await Task.FromResult(client.Echo("Hello World via WSHttp!"));
                             Console.WriteLine($"Response: {result}");
                         }
                         catch (Exception ex)
                         {
                             Console.WriteLine($"Error in channel: {ex.Message}");
-                            channel.Abort();
+                            channel?.Abort();
                             throw;
                         }
                         finally
                         {
-                            if (channel.State == CommunicationState.Opened)
+                            if (channel?.State == CommunicationState.Opened)
                             {
-                                channel.Close();
+                                channel?.Close();
                             }
                             else
                             {
-                                channel.Abort();
+                                channel?.Abort();
                             }
                         }
                     }
@@ -163,19 +161,19 @@ namespace NetCoreClient
                 {
                     try
                     {
-                        channel.Open();
+                        channel?.Open();
                         var result = await Task.FromResult(client.Echo("Hello World via NetTcp!"));
                         Console.WriteLine($"Response: {result}");
                     }
                     finally
                     {
-                        if (channel.State == CommunicationState.Opened)
+                        if (channel?.State == CommunicationState.Opened)
                         {
-                            channel.Close();
+                            channel?.Close();
                         }
                         else
                         {
-                            channel.Abort();
+                            channel?.Abort();
                         }
                     }
                 }

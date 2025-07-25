@@ -4,6 +4,8 @@ namespace Common
 {
     public class EchoService : IEchoService
     {
+        private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+
         public string Echo(string text)
         {
             Console.WriteLine($"Received {text} from client!");
@@ -44,7 +46,7 @@ namespace Common
                             if (string.IsNullOrWhiteSpace(payload)) return null;
                             try
                             {
-                                var message = JsonSerializer.Deserialize<EchoMessage>(payload);
+                                var message = JsonSerializer.Deserialize<EchoMessage>(payload, JsonOptions);
                                 return ComplexEcho(message ?? new EchoMessage());
                             }
                             catch

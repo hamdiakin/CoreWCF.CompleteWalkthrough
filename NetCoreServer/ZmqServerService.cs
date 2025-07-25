@@ -11,6 +11,7 @@ namespace NetCoreServer
     {
         private readonly ILogger<ZmqServerService> logger;
         private readonly IEchoService echoService;
+        private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
         public ZmqServerService(ILogger<ZmqServerService> logger, IEchoService echoService)
         {
@@ -54,7 +55,7 @@ namespace NetCoreServer
             {
                 logger.LogDebug($"Received raw message: {requestJson}");
 
-                var request = JsonSerializer.Deserialize<EchoRequest>(requestJson);
+                var request = JsonSerializer.Deserialize<EchoRequest>(requestJson, JsonOptions);
                 if (request == null)
                 {
                     var errorResponse = new EchoResponse
@@ -67,7 +68,7 @@ namespace NetCoreServer
                         }
                     };
 
-                    var errorJson = JsonSerializer.Serialize(errorResponse);
+                    var errorJson = JsonSerializer.Serialize(errorResponse, JsonOptions);
                     server.SendFrame(errorJson);
                     return;
                 }
@@ -78,7 +79,7 @@ namespace NetCoreServer
                 var response = await Task.FromResult(echoService.ProcessRequest(request));
 
                 // Send response
-                var responseJson = JsonSerializer.Serialize(response);
+                var responseJson = JsonSerializer.Serialize(response, JsonOptions);
                 server.SendFrame(responseJson);
 
                 logger.LogDebug($"Sent response: {responseJson}");
@@ -99,7 +100,7 @@ namespace NetCoreServer
 
                 try
                 {
-                    var errorJson = JsonSerializer.Serialize(errorResponse);
+                    var errorJson = JsonSerializer.Serialize(errorResponse, JsonOptions);
                     server.SendFrame(errorJson);
                 }
                 catch (Exception sendEx)

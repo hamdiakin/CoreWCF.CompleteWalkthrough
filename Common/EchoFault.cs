@@ -1,19 +1,13 @@
-﻿using Newtonsoft.Json;
+﻿using System.Text.Json.Serialization;
 
 namespace Common
 {
     public class EchoFault
     {
-        private string? text;
+        [JsonPropertyName("text")]
+        public string? Text { get; set; }
 
-        [JsonProperty("text")]
-        public string? Text
-        {
-            get { return text; }
-            set { text = value; }
-        }
-
-        [JsonProperty("reason")]
+        [JsonPropertyName("reason")]
         public string? Reason { get; set; }
     }
 }

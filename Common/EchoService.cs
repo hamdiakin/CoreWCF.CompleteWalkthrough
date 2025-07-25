@@ -1,4 +1,4 @@
-﻿using Newtonsoft.Json;
+﻿using System.Text.Json;
 
 namespace Common
 {
@@ -10,67 +10,72 @@ namespace Common
             return text;
         }
 
-        public string? ComplexEcho(EchoMessage text)
+        public string? ComplexEcho(EchoMessage message)
         {
-            Console.WriteLine($"Received {text.Text} from client!");
-            return text?.Text;
+            Console.WriteLine($"Received {message.Text} from client!");
+            return message?.Text;
         }
 
         public string FailEcho(string text)
         {
-            throw new EchoServiceException("WCF Fault OK", "FailReason");
+            throw new ServiceException("Echo failed as requested.", "FailReason");
         }
 
-        public string EchoForPermission(string echo)
+        public string EchoForPermission(string text)
         {
-            // Note: Permission checking would need to be implemented at the transport level in ZeroMQ
-            return echo;
+            return text;
         }
 
-        public ZmqResponse ProcessRequest(ZmqRequest request)
+        public EchoResponse ProcessRequest(EchoRequest request)
         {
             try
             {
-                var response = new ZmqResponse
+                var response = new EchoResponse
                 {
                     RequestId = request.RequestId,
                     Success = true
                 };
 
-                switch (request.Method.ToLower())
+                var methodMap = new Dictionary<string, Func<string?, string?>>
                 {
-                    case "echo":
-                        response.Result = Echo(request.Payload ?? string.Empty);
-                        break;
-
-                    case "complexecho":
-                        var echoMessage = JsonConvert.DeserializeObject<EchoMessage>(request.Payload ?? "{}");
-                        response.Result = ComplexEcho(echoMessage);
-                        break;
-
-                    case "failecho":
-                        response.Result = FailEcho(request.Payload ?? string.Empty);
-                        break;
-
-                    case "echoforpermission":
-                        response.Result = EchoForPermission(request.Payload ?? string.Empty);
-                        break;
-
-                    default:
-                        response.Success = false;
-                        response.Error = new EchoFault
+                    { "echo", payload => Echo(payload ?? string.Empty) },
+                    { "complexecho", payload =>
                         {
-                            Text = $"Unknown method: {request.Method}",
-                            Reason = "InvalidMethod"
-                        };
-                        break;
+                            if (string.IsNullOrWhiteSpace(payload)) return null;
+                            try
+                            {
+                                var message = JsonSerializer.Deserialize<EchoMessage>(payload);
+                                return ComplexEcho(message ?? new EchoMessage());
+                            }
+                            catch
+                            {
+                                return null;
+                            }
+                        }
+                    },
+                    { "failecho", payload => FailEcho(payload ?? string.Empty) },
+                    { "echoforpermission", payload => EchoForPermission(payload ?? string.Empty) }
+                };
+
+                if (methodMap.TryGetValue(request.Method.ToLower(), out var handler))
+                {
+                    response.Result = handler(request.Payload);
+                }
+                else
+                {
+                    response.Success = false;
+                    response.Error = new EchoFault
+                    {
+                        Text = $"Unknown method: {request.Method}",
+                        Reason = "InvalidMethod"
+                    };
                 }
 
                 return response;
             }
-            catch (EchoServiceException ex)
+            catch (ServiceException ex)
             {
-                return new ZmqResponse
+                return new EchoResponse
                 {
                     RequestId = request.RequestId,
                     Success = false,
@@ -83,7 +88,7 @@ namespace Common
             }
             catch (Exception ex)
             {
-                return new ZmqResponse
+                return new EchoResponse
                 {
                     RequestId = request.RequestId,
                     Success = false,
@@ -94,16 +99,6 @@ namespace Common
                     }
                 };
             }
-        }
-    }
-
-    public class EchoServiceException : Exception
-    {
-        public string Reason { get; }
-
-        public EchoServiceException(string message, string reason) : base(message)
-        {
-            Reason = reason;
         }
     }
 }

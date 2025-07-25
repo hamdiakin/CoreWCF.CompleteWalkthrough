@@ -1,4 +1,4 @@
-﻿namespace ZmqServer
+﻿namespace NetCoreServer
 {
     public static class AppConfig
     {

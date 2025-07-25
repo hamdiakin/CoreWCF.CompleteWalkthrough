@@ -1,7 +1,7 @@
 ﻿using Common;
 using NetMQ;
 using NetMQ.Sockets;
-using Newtonsoft.Json;
+using System.Text.Json;
 
 namespace NetCoreClient
 {
@@ -13,7 +13,7 @@ namespace NetCoreClient
 
             try
             {
-                using var client = new ZmqEchoClient();
+                using var client = new EchoClient();
 
                 Console.WriteLine("Testing ZeroMQ Echo Service...\n");
 
@@ -40,7 +40,7 @@ namespace NetCoreClient
             }
         }
 
-        private static async Task TestEchoAsync(ZmqEchoClient client)
+        private static async Task TestEchoAsync(EchoClient client)
         {
             Console.WriteLine("Testing Echo method...");
             try
@@ -55,7 +55,7 @@ namespace NetCoreClient
             Console.WriteLine();
         }
 
-        private static async Task TestComplexEchoAsync(ZmqEchoClient client)
+        private static async Task TestComplexEchoAsync(EchoClient client)
         {
             Console.WriteLine("Testing ComplexEcho method...");
             try
@@ -71,7 +71,7 @@ namespace NetCoreClient
             Console.WriteLine();
         }
 
-        private static async Task TestFailEchoAsync(ZmqEchoClient client)
+        private static async Task TestFailEchoAsync(EchoClient client)
         {
             Console.WriteLine("Testing FailEcho method (should throw exception)...");
             try
@@ -79,7 +79,7 @@ namespace NetCoreClient
                 var result = await client.FailEchoAsync("This should fail");
                 Console.WriteLine($"Unexpected success: {result}");
             }
-            catch (ZmqServiceException ex)
+            catch (ServiceException ex)
             {
                 Console.WriteLine($"Expected exception caught: {ex.Message} (Reason: {ex.Reason})");
             }
@@ -90,7 +90,7 @@ namespace NetCoreClient
             Console.WriteLine();
         }
 
-        private static async Task TestEchoForPermissionAsync(ZmqEchoClient client)
+        private static async Task TestEchoForPermissionAsync(EchoClient client)
         {
             Console.WriteLine("Testing EchoForPermission method...");
             try
@@ -106,20 +106,20 @@ namespace NetCoreClient
         }
     }
 
-    public class ZmqEchoClient : IDisposable
+    public class EchoClient : IDisposable
     {
-        private readonly RequestSocket _socket;
-        private readonly object _lockObject = new object();
+        private readonly RequestSocket socket;
+        private readonly object lockObject = new object();
 
-        public ZmqEchoClient()
+        public EchoClient()
         {
-            _socket = new RequestSocket();
-            _socket.Connect("tcp://localhost:8088");
+            socket = new RequestSocket();
+            socket.Connect("tcp://localhost:8088");
         }
 
         public async Task<string> EchoAsync(string text)
         {
-            var request = new ZmqRequest
+            var request = new EchoRequest
             {
                 Method = "Echo",
                 Payload = text
@@ -131,10 +131,10 @@ namespace NetCoreClient
 
         public async Task<string?> ComplexEchoAsync(EchoMessage message)
         {
-            var request = new ZmqRequest
+            var request = new EchoRequest
             {
                 Method = "ComplexEcho",
-                Payload = JsonConvert.SerializeObject(message)
+                Payload = JsonSerializer.Serialize(message)
             };
 
             var response = await SendRequestAsync(request);
@@ -143,7 +143,7 @@ namespace NetCoreClient
 
         public async Task<string> FailEchoAsync(string text)
         {
-            var request = new ZmqRequest
+            var request = new EchoRequest
             {
                 Method = "FailEcho",
                 Payload = text
@@ -155,7 +155,7 @@ namespace NetCoreClient
 
         public async Task<string> EchoForPermissionAsync(string text)
         {
-            var request = new ZmqRequest
+            var request = new EchoRequest
             {
                 Method = "EchoForPermission",
                 Payload = text
@@ -165,20 +165,20 @@ namespace NetCoreClient
             return response.Result ?? string.Empty;
         }
 
-        private async Task<ZmqResponse> SendRequestAsync(ZmqRequest request)
+        private async Task<EchoResponse> SendRequestAsync(EchoRequest request)
         {
             return await Task.Run(() =>
             {
-                lock (_lockObject)
+                lock (lockObject)
                 {
-                    var requestJson = JsonConvert.SerializeObject(request);
+                    var requestJson = JsonSerializer.Serialize(request);
 
                     // Send request
-                    _socket.SendFrame(requestJson);
+                    socket.SendFrame(requestJson);
 
                     // Receive response
-                    var responseJson = _socket.ReceiveFrameString();
-                    var response = JsonConvert.DeserializeObject<ZmqResponse>(responseJson);
+                    var responseJson = socket.ReceiveFrameString();
+                    var response = JsonSerializer.Deserialize<EchoResponse>(responseJson);
 
                     if (response == null)
                     {
@@ -187,7 +187,7 @@ namespace NetCoreClient
 
                     if (!response.Success && response.Error != null)
                     {
-                        throw new ZmqServiceException(response.Error.Text ?? "Unknown error", response.Error.Reason ?? "Unknown");
+                        throw new ServiceException(response.Error.Text ?? "Unknown error", response.Error.Reason ?? "Unknown");
                     }
 
                     return response;
@@ -197,15 +197,15 @@ namespace NetCoreClient
 
         public void Dispose()
         {
-            _socket?.Dispose();
+            socket?.Dispose();
         }
     }
 
-    public class ZmqServiceException : Exception
+    public class ServiceException : Exception
     {
         public string Reason { get; }
 
-        public ZmqServiceException(string message, string reason) : base(message)
+        public ServiceException(string message, string reason) : base(message)
         {
             Reason = reason;
         }

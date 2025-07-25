@@ -1,11 +1,10 @@
-﻿using System.Runtime.Serialization;
+﻿using Newtonsoft.Json;
 
 namespace Common
 {
-    [DataContract]
     public class EchoMessage
     {
-        [DataMember]
+        [JsonProperty("text")]
         public string? Text { get; set; }
     }
 }

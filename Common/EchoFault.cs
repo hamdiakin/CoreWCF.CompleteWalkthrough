@@ -1,17 +1,19 @@
-﻿using System.Runtime.Serialization;
+﻿using Newtonsoft.Json;
 
 namespace Common
 {
-    [DataContract]
     public class EchoFault
     {
         private string? text;
 
-        [DataMember]
+        [JsonProperty("text")]
         public string? Text
         {
             get { return text; }
             set { text = value; }
         }
+
+        [JsonProperty("reason")]
+        public string? Reason { get; set; }
     }
 }

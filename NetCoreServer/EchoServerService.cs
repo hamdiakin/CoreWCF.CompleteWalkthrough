@@ -7,13 +7,13 @@ using System.Text.Json;
 
 namespace NetCoreServer
 {
-    public class ZmqServerService : BackgroundService
+    public class EchoServerService : BackgroundService
     {
-        private readonly ILogger<ZmqServerService> logger;
+        private readonly ILogger<EchoServerService> logger;
         private readonly IEchoService echoService;
         private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
-        public ZmqServerService(ILogger<ZmqServerService> logger, IEchoService echoService)
+        public EchoServerService(ILogger<EchoServerService> logger, IEchoService echoService)
         {
             this.logger = logger;
             this.echoService = echoService;
@@ -76,7 +76,7 @@ namespace NetCoreServer
                 logger.LogInformation($"Processing {request.Method} request (ID: {request.RequestId})");
 
                 // Process the request
-                var response = await Task.FromResult(echoService.ProcessRequest(request));
+                var response = await echoService.ProcessRequest(request);
 
                 // Send response
                 var responseJson = JsonSerializer.Serialize(response, JsonOptions);

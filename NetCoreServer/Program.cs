@@ -21,9 +21,9 @@ namespace NetCoreServer
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Server terminated unexpectedly: {ex.Message}");
-                Console.WriteLine(ex.ToString());
-                Console.ReadKey();
+                // Use minimal fallback logging if DI logger is not available
+                Console.Error.WriteLine($"Server terminated unexpectedly: {ex.Message}");
+                Console.Error.WriteLine(ex.ToString());
             }
         }
 
@@ -32,7 +32,7 @@ namespace NetCoreServer
                 .ConfigureServices((context, services) =>
                 {
                     services.AddSingleton<IEchoService, EchoService>();
-                    services.AddHostedService<ZmqServerService>();
+                    services.AddHostedService<EchoServerService>();
                 })
                 .ConfigureLogging(logging =>
                 {

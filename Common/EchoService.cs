@@ -1,106 +1,121 @@
 ﻿using System.Text.Json;
+using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
+using System;
+using Common;
 
-namespace Common
+public class EchoService : IEchoService
 {
-    public class EchoService : IEchoService
+    private static readonly JsonSerializerOptions jsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+    private readonly ILogger<EchoService> logger;
+
+    public EchoService(ILogger<EchoService> logger)
     {
-        private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+        this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    }
 
-        public string Echo(string text)
-        {
-            Console.WriteLine($"Received {text} from client!");
-            return text;
-        }
+    public async Task<string> Echo(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        logger.LogInformation("Received {Text} from client!", text);
+        return await Task.FromResult(text);
+    }
 
-        public string? ComplexEcho(EchoMessage message)
-        {
-            Console.WriteLine($"Received {message.Text} from client!");
-            return message?.Text;
-        }
+    public async Task<string?> ComplexEcho(EchoMessage message)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        logger.LogInformation("Received {Text} from client!", message.Text);
+        return await Task.FromResult(message?.Text);
+    }
 
-        public string FailEcho(string text)
-        {
-            throw new ServiceException("Echo failed as requested.", "FailReason");
-        }
+    public Task<string> FailEcho(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        return Task.FromException<string>(new ServiceException("Echo failed as requested.", "FailReason"));
+    }
 
-        public string EchoForPermission(string text)
-        {
-            return text;
-        }
+    public async Task<string> EchoForPermission(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        return await Task.FromResult(text);
+    }
 
-        public EchoResponse ProcessRequest(EchoRequest request)
+    public async Task<EchoResponse> ProcessRequest(EchoRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        try
         {
-            try
+            var response = new EchoResponse
             {
-                var response = new EchoResponse
-                {
-                    RequestId = request.RequestId,
-                    Success = true
-                };
+                RequestId = request.RequestId,
+                Success = true
+            };
 
-                var methodMap = new Dictionary<string, Func<string?, string?>>
-                {
-                    { "echo", payload => Echo(payload ?? string.Empty) },
-                    { "complexecho", payload =>
+            var methodMap = new Dictionary<string, Func<string?, Task<string?>>>
+            {
+                { "echo", async payload => await Echo(payload ?? string.Empty) },
+                { "complexecho", async payload =>
+                    {
+                        if (string.IsNullOrWhiteSpace(payload)) return null;
+                        try
                         {
-                            if (string.IsNullOrWhiteSpace(payload)) return null;
-                            try
-                            {
-                                var message = JsonSerializer.Deserialize<EchoMessage>(payload, JsonOptions);
-                                return ComplexEcho(message ?? new EchoMessage());
-                            }
-                            catch
-                            {
-                                return null;
-                            }
+                            var message = JsonSerializer.Deserialize<EchoMessage>(payload, jsonOptions);
+                            return await ComplexEcho(message ?? new EchoMessage());
                         }
-                    },
-                    { "failecho", payload => FailEcho(payload ?? string.Empty) },
-                    { "echoforpermission", payload => EchoForPermission(payload ?? string.Empty) }
-                };
-
-                if (methodMap.TryGetValue(request.Method.ToLower(), out var handler))
-                {
-                    response.Result = handler(request.Payload);
-                }
-                else
-                {
-                    response.Success = false;
-                    response.Error = new EchoFault
-                    {
-                        Text = $"Unknown method: {request.Method}",
-                        Reason = "InvalidMethod"
-                    };
-                }
-
-                return response;
-            }
-            catch (ServiceException ex)
-            {
-                return new EchoResponse
-                {
-                    RequestId = request.RequestId,
-                    Success = false,
-                    Error = new EchoFault
-                    {
-                        Text = ex.Message,
-                        Reason = ex.Reason
+                        catch (Exception ex)
+                        {
+                            logger.LogError(ex, "Failed to deserialize or process ComplexEcho payload.");
+                            return null;
+                        }
                     }
-                };
-            }
-            catch (Exception ex)
+                },
+                { "failecho", async payload => await FailEcho(payload ?? string.Empty) },
+                { "echoforpermission", async payload => await EchoForPermission(payload ?? string.Empty) }
+            };
+
+            if (methodMap.TryGetValue(request.Method.ToLower(), out var handler))
             {
-                return new EchoResponse
+                response.Result = await handler(request.Payload);
+            }
+            else
+            {
+                response.Success = false;
+                response.Error = new EchoFault
                 {
-                    RequestId = request.RequestId,
-                    Success = false,
-                    Error = new EchoFault
-                    {
-                        Text = ex.Message,
-                        Reason = "UnknownError"
-                    }
+                    Text = $"Unknown method: {request.Method}",
+                    Reason = "InvalidMethod"
                 };
             }
+
+            return response;
+        }
+        catch (ServiceException ex)
+        {
+            logger.LogWarning(ex, "ServiceException occurred while processing request {RequestId}", request.RequestId);
+            return new EchoResponse
+            {
+                RequestId = request.RequestId,
+                Success = false,
+                Error = new EchoFault
+                {
+                    Text = ex.Message,
+                    Reason = ex.Reason
+                }
+            };
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Unexpected error occurred while processing request {RequestId}", request.RequestId);
+            return new EchoResponse
+            {
+                RequestId = request.RequestId,
+                Success = false,
+                Error = new EchoFault
+                {
+                    Text = ex.Message,
+                    Reason = "UnknownError"
+                }
+            };
         }
     }
 }

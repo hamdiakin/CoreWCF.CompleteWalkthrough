@@ -31,7 +31,7 @@ public class EchoService : IEchoService
     public Task<string> FailEcho(string text)
     {
         ArgumentNullException.ThrowIfNull(text);
-        return Task.FromException<string>(new ServiceException("Echo failed as requested.", "FailReason"));
+        return Task.FromException<string>(new ServiceException(Constants.EchoFailedMessage, Constants.FailReason));
     }
 
     public async Task<string> EchoForPermission(string text)
@@ -97,15 +97,15 @@ public class EchoService : IEchoService
             result.IsValid = false;
         }
         
-        if (user.Age < 0 || user.Age > 150)
+        if (user.Age < Constants.MinUserAge || user.Age > Constants.MaxUserAge)
         {
-            result.Errors.Add("Age must be between 0 and 150");
+            result.Errors.Add(Constants.AgeRangeMessage);
             result.IsValid = false;
         }
         
         if (strictValidation && user.Roles.Count == 0)
         {
-            result.Warnings.Add("User has no roles assigned");
+            result.Warnings.Add(Constants.NoRolesWarningMessage);
         }
         
         return await Task.FromResult(result);
@@ -139,23 +139,24 @@ public class EchoService : IEchoService
         
         logger.LogInformation("Getting processing options for profile type: {ProfileType}, includeAdvanced: {IncludeAdvanced}", profileType, includeAdvanced);
         
+        var isPremium = profileType.ToLower() == Constants.PremiumProfileType;
         var options = new ProcessingOptions
         {
             EnableLogging = true,
-            MaxRetries = profileType.ToLower() == "premium" ? 5 : 3,
-            Timeout = TimeSpan.FromSeconds(profileType.ToLower() == "premium" ? 60 : 30),
-            ProcessingMode = profileType.ToLower() == "premium" ? "Premium" : "Standard",
+            MaxRetries = isPremium ? Constants.PremiumMaxRetries : Constants.StandardMaxRetries,
+            Timeout = TimeSpan.FromSeconds(isPremium ? Constants.PremiumTimeoutSeconds : Constants.StandardTimeoutSeconds),
+            ProcessingMode = isPremium ? Constants.PremiumMode : Constants.StandardMode,
             CustomSettings = new Dictionary<string, string>
             {
-                ["profileType"] = profileType,
-                ["includeAdvanced"] = includeAdvanced.ToString()
+                [Constants.ProfileTypeKey] = profileType,
+                [Constants.IncludeAdvancedKey] = includeAdvanced.ToString()
             }
         };
         
         if (includeAdvanced)
         {
-            options.CustomSettings["advancedFeatures"] = "enabled";
-            options.CustomSettings["priority"] = "high";
+            options.CustomSettings[Constants.AdvancedFeaturesKey] = Constants.AdvancedFeaturesEnabled;
+            options.CustomSettings[Constants.PriorityKey] = Constants.HighPriority;
         }
         
         return await Task.FromResult(options);

@@ -73,7 +73,7 @@ namespace NetCoreClient
             logger.LogInformation("=== Testing ComplexEcho method ===");
             try
             {
-                var message = new EchoMessage { Text = "Complex message from ZeroMQ!" };
+                var message = TestDataFactory.CreateTestEchoMessage();
                 var result = await client.ComplexEchoAsync(message);
                 logger.LogInformation("Response: {Result}", result);
             }
@@ -121,22 +121,8 @@ namespace NetCoreClient
             logger.LogInformation("=== Testing ProcessUserProfile method ===");
             try
             {
-                var user = new UserProfile
-                {
-                    Id = "user123",
-                    Name = "John Doe",
-                    Email = "john.doe@example.com",
-                    Age = 30,
-                    IsActive = true,
-                    Roles = new List<string> { "User", "Editor" },
-                    Metadata = new Dictionary<string, object>
-                    {
-                        ["department"] = "Engineering",
-                        ["location"] = "New York"
-                    }
-                };
-
-                var result = await client.ProcessUserProfileAsync(user, "UPDATE_PROFILE", false);
+                var user = TestDataFactory.CreateTestUser1();
+                var result = await client.ProcessUserProfileAsync(user, Constants.UpdateProfileOperation, false);
                 logger.LogInformation("Processed User Profile - ID: {Id}, Name: {Name}, Roles: {Roles}", 
                     result.Id, result.Name, string.Join(", ", result.Roles));
             }
@@ -153,7 +139,7 @@ namespace NetCoreClient
             {
                 var user = new UserProfile
                 {
-                    Id = "user456",
+                    Id = Constants.TestUserId456,
                     Name = "Jane Smith",
                     Email = "jane.smith@example.com",
                     Age = 25,

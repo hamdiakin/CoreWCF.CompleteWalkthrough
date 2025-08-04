@@ -11,7 +11,6 @@ namespace NetCoreServer
     {
         private readonly ILogger<EchoServerService> logger;
         private readonly IEchoService echoService;
-        private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
         public EchoServerService(ILogger<EchoServerService> logger, IEchoService echoService)
         {
@@ -35,7 +34,7 @@ namespace NetCoreServer
                 try
                 {
                     // Check if there's a message available (non-blocking)
-                    if (server.TryReceiveFrameString(TimeSpan.FromMilliseconds(100), out string? requestJson))
+                    if (server.TryReceiveFrameString(TimeSpan.FromMilliseconds(Constants.NetworkTimeoutMs), out string? requestJson))
                     {
                         await ProcessMessageAsync(server, requestJson, stoppingToken);
                     }
@@ -55,20 +54,11 @@ namespace NetCoreServer
             {
                 logger.LogDebug($"Received raw message: {requestJson}");
 
-                var request = JsonSerializer.Deserialize<EchoRequest>(requestJson, JsonOptions);
+                var request = JsonUtilities.SafeDeserialize<EchoRequest>(requestJson);
                 if (request == null)
                 {
-                    var errorResponse = new EchoResponse
-                    {
-                        Success = false,
-                        Error = new EchoFault
-                        {
-                            Text = "Invalid request format",
-                            Reason = "InvalidJson"
-                        }
-                    };
-
-                    var errorJson = JsonSerializer.Serialize(errorResponse, JsonOptions);
+                    var errorResponse = CreateErrorResponse(string.Empty, Constants.InvalidComplexEchoPayloadMessage, Constants.InvalidJsonReason);
+                    var errorJson = JsonUtilities.SafeSerialize(errorResponse);
                     server.SendFrame(errorJson);
                     return;
                 }
@@ -79,7 +69,7 @@ namespace NetCoreServer
                 var response = await ProcessRequestDirectly(request);
 
                 // Send response
-                var responseJson = JsonSerializer.Serialize(response, JsonOptions);
+                var responseJson = JsonUtilities.SafeSerialize(response);
                 server.SendFrame(responseJson);
 
                 logger.LogDebug($"Sent response: {responseJson}");
@@ -88,19 +78,11 @@ namespace NetCoreServer
             {
                 logger.LogError(ex, "Error processing message");
 
-                var errorResponse = new EchoResponse
-                {
-                    Success = false,
-                    Error = new EchoFault
-                    {
-                        Text = ex.Message,
-                        Reason = "ProcessingError"
-                    }
-                };
+                var errorResponse = CreateErrorResponse(string.Empty, ex.Message, Constants.ProcessingErrorReason);
 
                 try
                 {
-                    var errorJson = JsonSerializer.Serialize(errorResponse, JsonOptions);
+                    var errorJson = JsonUtilities.SafeSerialize(errorResponse);
                     server.SendFrame(errorJson);
                 }
                 catch (Exception sendEx)
@@ -110,179 +92,227 @@ namespace NetCoreServer
             }
         }
 
+        // Helper method to create successful responses
+        private static EchoResponse CreateSuccessResponse(string requestId, string? result)
+        {
+            return new EchoResponse
+            {
+                RequestId = requestId,
+                Success = true,
+                Result = result
+            };
+        }
+
+        // Helper method to create error responses
+        private static EchoResponse CreateErrorResponse(string requestId, string errorText, string reason)
+        {
+            return new EchoResponse
+            {
+                RequestId = requestId,
+                Success = false,
+                Error = new EchoFault
+                {
+                    Text = errorText,
+                    Reason = reason
+                }
+            };
+        }
+
+        // Helper method to deserialize JSON payload safely
+        private T? DeserializePayload<T>(string payload) where T : class
+        {
+            var result = JsonUtilities.SafeDeserialize<T>(payload);
+            if (result == null)
+            {
+                logger.LogError("Failed to deserialize payload to {Type}", typeof(T).Name);
+            }
+            return result;
+        }
+
+        // Helper method to extract property from JsonElement safely
+        private static T? GetPropertyValue<T>(JsonElement payload, string propertyName)
+        {
+            return JsonUtilities.SafeGetProperty<T?>(payload, propertyName);
+        }
+
+        // Helper method to serialize objects to JSON
+        private static string SerializeToJson<T>(T obj)
+        {
+            return JsonUtilities.SafeSerialize(obj);
+        }
+
+        // Helper method to convert results to strings safely
+        private static string ConvertToString<T>(T value)
+        {
+            return JsonUtilities.SafeToString(value);
+        }
+
+        // Helper method for processing complex methods with object serialization
+        private async Task<EchoResponse> ProcessComplexMethodWithSerialization<T>(EchoRequest request, Func<JsonElement, Task<T>> processor)
+        {
+            return await ProcessComplexMethodAsync(request, async (payload) =>
+            {
+                var result = await processor(payload);
+                return SerializeToJson(result);
+            });
+        }
+
+        // Helper method for processing complex methods with string conversion
+        private async Task<EchoResponse> ProcessComplexMethodWithStringConversion<T>(EchoRequest request, Func<JsonElement, Task<T>> processor)
+        {
+            return await ProcessComplexMethodAsync(request, async (payload) =>
+            {
+                var result = await processor(payload);
+                return ConvertToString(result);
+            });
+        }
+
         private async Task<EchoResponse> ProcessRequestDirectly(EchoRequest request)
         {
             try
             {
-                switch (request.Method)
+                return request.Method switch
                 {
-                    case ServiceMethodType.Echo:
-                        var echoResult = await echoService.Echo(request.Payload ?? string.Empty);
-                        return new EchoResponse
-                        {
-                            RequestId = request.RequestId,
-                            Success = true,
-                            Result = echoResult
-                        };
-
-                    case ServiceMethodType.ComplexEcho:
-                        if (string.IsNullOrWhiteSpace(request.Payload))
-                        {
-                            return new EchoResponse
-                            {
-                                RequestId = request.RequestId,
-                                Success = true,
-                                Result = null
-                            };
-                        }
-                        
-                        try
-                        {
-                            var message = JsonSerializer.Deserialize<EchoMessage>(request.Payload, JsonOptions);
-                            var complexResult = await echoService.ComplexEcho(message ?? new EchoMessage());
-                            return new EchoResponse
-                            {
-                                RequestId = request.RequestId,
-                                Success = true,
-                                Result = complexResult
-                            };
-                        }
-                        catch (Exception ex)
-                        {
-                            logger.LogError(ex, "Failed to deserialize or process ComplexEcho payload");
-                            return new EchoResponse
-                            {
-                                RequestId = request.RequestId,
-                                Success = false,
-                                Error = new EchoFault { Text = "Invalid ComplexEcho payload", Reason = "InvalidJson" }
-                            };
-                        }
-
-                    case ServiceMethodType.FailEcho:
-                        try
-                        {
-                            var failResult = await echoService.FailEcho(request.Payload ?? string.Empty);
-                            return new EchoResponse
-                            {
-                                RequestId = request.RequestId,
-                                Success = true,
-                                Result = failResult
-                            };
-                        }
-                        catch (ServiceException ex)
-                        {
-                            return new EchoResponse
-                            {
-                                RequestId = request.RequestId,
-                                Success = false,
-                                Error = new EchoFault { Text = ex.Message, Reason = ex.Reason }
-                            };
-                        }
-
-                    case ServiceMethodType.EchoForPermission:
-                        var permissionResult = await echoService.EchoForPermission(request.Payload ?? string.Empty);
-                        return new EchoResponse
-                        {
-                            RequestId = request.RequestId,
-                            Success = true,
-                            Result = permissionResult
-                        };
-
-                    // Complex methods
-                    case ServiceMethodType.ProcessUserProfile:
-                        return await ProcessComplexMethodAsync(request, async (payload) =>
-                        {
-                            var user = JsonSerializer.Deserialize<UserProfile>(payload.GetProperty("user").GetRawText(), JsonOptions);
-                            var operationId = payload.GetProperty("operationId").GetString();
-                            var validateOnly = payload.GetProperty("validateOnly").GetBoolean();
-                            
-                            var result = await echoService.ProcessUserProfile(user!, operationId!, validateOnly);
-                            return JsonSerializer.Serialize(result, JsonOptions);
-                        });
-
-                    case ServiceMethodType.ValidateUserData:
-                        return await ProcessComplexMethodAsync(request, async (payload) =>
-                        {
-                            var user = JsonSerializer.Deserialize<UserProfile>(payload.GetProperty("user").GetRawText(), JsonOptions);
-                            var strictValidation = payload.GetProperty("strictValidation").GetBoolean();
-                            var maxErrors = payload.GetProperty("maxErrors").GetInt32();
-                            
-                            var result = await echoService.ValidateUserData(user!, strictValidation, maxErrors);
-                            return JsonSerializer.Serialize(result, JsonOptions);
-                        });
-
-                    case ServiceMethodType.ProcessWithOptions:
-                        return await ProcessComplexMethodAsync(request, async (payload) =>
-                        {
-                            var data = payload.GetProperty("data").GetString();
-                            var options = JsonSerializer.Deserialize<ProcessingOptions>(payload.GetProperty("options").GetRawText(), JsonOptions);
-                            var isPriority = payload.GetProperty("isPriority").GetBoolean();
-                            
-                            var result = await echoService.ProcessWithOptions(data!, options!, isPriority);
-                            return result;
-                        });
-
-                    case ServiceMethodType.GetProcessingOptions:
-                        return await ProcessComplexMethodAsync(request, async (payload) =>
-                        {
-                            var profileType = payload.GetProperty("profileType").GetString();
-                            var includeAdvanced = payload.GetProperty("includeAdvanced").GetBoolean();
-                            
-                            var result = await echoService.GetProcessingOptions(profileType!, includeAdvanced);
-                            return JsonSerializer.Serialize(result, JsonOptions);
-                        });
-
-                    case ServiceMethodType.UpdateUserStatus:
-                        return await ProcessComplexMethodAsync(request, async (payload) =>
-                        {
-                            var user = JsonSerializer.Deserialize<UserProfile>(payload.GetProperty("user").GetRawText(), JsonOptions);
-                            var newStatus = payload.GetProperty("newStatus").GetString();
-                            var notifyUser = payload.GetProperty("notifyUser").GetBoolean();
-                            var priority = payload.GetProperty("priority").GetInt32();
-                            
-                            var result = await echoService.UpdateUserStatus(user!, newStatus!, notifyUser, priority);
-                            return result.ToString();
-                        });
-
-                    case ServiceMethodType.ProcessComplexData:
-                        return await ProcessComplexMethodAsync(request, async (payload) =>
-                        {
-                            var user = JsonSerializer.Deserialize<UserProfile>(payload.GetProperty("user").GetRawText(), JsonOptions);
-                            var options = JsonSerializer.Deserialize<ProcessingOptions>(payload.GetProperty("options").GetRawText(), JsonOptions);
-                            var operation = payload.GetProperty("operation").GetString();
-                            var dryRun = payload.GetProperty("dryRun").GetBoolean();
-                            
-                            var result = await echoService.ProcessComplexData(user!, options!, operation!, dryRun);
-                            return JsonSerializer.Serialize(result, JsonOptions);
-                        });
-
-                    default:
-                        return new EchoResponse
-                        {
-                            RequestId = request.RequestId,
-                            Success = false,
-                            Error = new EchoFault
-                            {
-                                Text = $"Unknown method: {request.Method}",
-                                Reason = "InvalidMethod"
-                            }
-                        };
-                }
+                    ServiceMethodType.Echo => await ProcessEchoAsync(request),
+                    ServiceMethodType.ComplexEcho => await ProcessComplexEchoAsync(request),
+                    ServiceMethodType.FailEcho => await ProcessFailEchoAsync(request),
+                    ServiceMethodType.EchoForPermission => await ProcessEchoForPermissionAsync(request),
+                    ServiceMethodType.ProcessUserProfile => await ProcessUserProfileMethodAsync(request),
+                    ServiceMethodType.ValidateUserData => await ProcessValidateUserDataMethodAsync(request),
+                    ServiceMethodType.ProcessWithOptions => await ProcessWithOptionsMethodAsync(request),
+                    ServiceMethodType.GetProcessingOptions => await ProcessGetProcessingOptionsMethodAsync(request),
+                    ServiceMethodType.UpdateUserStatus => await ProcessUpdateUserStatusMethodAsync(request),
+                    ServiceMethodType.ProcessComplexData => await ProcessComplexDataMethodAsync(request),
+                    _ => CreateErrorResponse(request.RequestId, $"{Constants.UnknownMethodMessage}: {request.Method}", Constants.InvalidMethodReason)
+                };
             }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Error processing request {Method}", request.Method);
-                return new EchoResponse
-                {
-                    RequestId = request.RequestId,
-                    Success = false,
-                    Error = new EchoFault
-                    {
-                        Text = ex.Message,
-                        Reason = "ProcessingError"
-                    }
-                };
+                return CreateErrorResponse(request.RequestId, ex.Message, Constants.ProcessingErrorReason);
             }
+        }
+
+        private async Task<EchoResponse> ProcessEchoAsync(EchoRequest request)
+        {
+            var result = await echoService.Echo(request.Payload ?? string.Empty);
+            return CreateSuccessResponse(request.RequestId, result);
+        }
+
+        private async Task<EchoResponse> ProcessComplexEchoAsync(EchoRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request.Payload))
+            {
+                return CreateSuccessResponse(request.RequestId, null);
+            }
+
+            var message = DeserializePayload<EchoMessage>(request.Payload);
+            if (message == null)
+            {
+                logger.LogError("Failed to deserialize ComplexEcho payload");
+                return CreateErrorResponse(request.RequestId, Constants.InvalidComplexEchoPayloadMessage, Constants.InvalidJsonReason);
+            }
+
+            var result = await echoService.ComplexEcho(message);
+            return CreateSuccessResponse(request.RequestId, result);
+        }
+
+        private async Task<EchoResponse> ProcessFailEchoAsync(EchoRequest request)
+        {
+            try
+            {
+                var result = await echoService.FailEcho(request.Payload ?? string.Empty);
+                return CreateSuccessResponse(request.RequestId, result);
+            }
+            catch (ServiceException ex)
+            {
+                return CreateErrorResponse(request.RequestId, ex.Message, ex.Reason);
+            }
+        }
+
+        private async Task<EchoResponse> ProcessEchoForPermissionAsync(EchoRequest request)
+        {
+            var result = await echoService.EchoForPermission(request.Payload ?? string.Empty);
+            return CreateSuccessResponse(request.RequestId, result);
+        }
+
+        private async Task<EchoResponse> ProcessUserProfileMethodAsync(EchoRequest request)
+        {
+            return await ProcessComplexMethodWithSerialization(request, async (payload) =>
+            {
+                var user = GetPropertyValue<UserProfile>(payload, "user");
+                var operationId = GetPropertyValue<string>(payload, "operationId");
+                var validateOnly = GetPropertyValue<bool>(payload, "validateOnly");
+
+                var result = await echoService.ProcessUserProfile(user!, operationId!, validateOnly);
+                return result;
+            });
+        }
+
+        private async Task<EchoResponse> ProcessValidateUserDataMethodAsync(EchoRequest request)
+        {
+            return await ProcessComplexMethodWithSerialization(request, async (payload) =>
+            {
+                var user = GetPropertyValue<UserProfile>(payload, "user");
+                var strictValidation = GetPropertyValue<bool>(payload, "strictValidation");
+                var maxErrors = GetPropertyValue<int>(payload, "maxErrors");
+
+                var result = await echoService.ValidateUserData(user!, strictValidation, maxErrors);
+                return result;
+            });
+        }
+
+        private async Task<EchoResponse> ProcessWithOptionsMethodAsync(EchoRequest request)
+        {
+            return await ProcessComplexMethodAsync(request, async (payload) =>
+            {
+                var data = GetPropertyValue<string>(payload, "data");
+                var options = GetPropertyValue<ProcessingOptions>(payload, "options");
+                var isPriority = GetPropertyValue<bool>(payload, "isPriority");
+
+                var result = await echoService.ProcessWithOptions(data!, options!, isPriority);
+                return result;
+            });
+        }
+
+        private async Task<EchoResponse> ProcessGetProcessingOptionsMethodAsync(EchoRequest request)
+        {
+            return await ProcessComplexMethodWithSerialization(request, async (payload) =>
+            {
+                var profileType = GetPropertyValue<string>(payload, "profileType");
+                var includeAdvanced = GetPropertyValue<bool>(payload, "includeAdvanced");
+
+                var result = await echoService.GetProcessingOptions(profileType!, includeAdvanced);
+                return result;
+            });
+        }
+
+        private async Task<EchoResponse> ProcessUpdateUserStatusMethodAsync(EchoRequest request)
+        {
+            return await ProcessComplexMethodWithStringConversion(request, async (payload) =>
+            {
+                var user = GetPropertyValue<UserProfile>(payload, "user");
+                var newStatus = GetPropertyValue<string>(payload, "newStatus");
+                var notifyUser = GetPropertyValue<bool>(payload, "notifyUser");
+                var priority = GetPropertyValue<int>(payload, "priority");
+
+                var result = await echoService.UpdateUserStatus(user!, newStatus!, notifyUser, priority);
+                return result;
+            });
+        }
+
+        private async Task<EchoResponse> ProcessComplexDataMethodAsync(EchoRequest request)
+        {
+            return await ProcessComplexMethodWithSerialization(request, async (payload) =>
+            {
+                var user = GetPropertyValue<UserProfile>(payload, "user");
+                var options = GetPropertyValue<ProcessingOptions>(payload, "options");
+                var operation = GetPropertyValue<string>(payload, "operation");
+                var dryRun = GetPropertyValue<bool>(payload, "dryRun");
+
+                var result = await echoService.ProcessComplexData(user!, options!, operation!, dryRun);
+                return result;
+            });
         }
 
         private async Task<EchoResponse> ProcessComplexMethodAsync(EchoRequest request, Func<JsonElement, Task<string>> processor)
@@ -291,33 +321,18 @@ namespace NetCoreServer
             {
                 if (string.IsNullOrEmpty(request.Payload))
                 {
-                    return new EchoResponse
-                    {
-                        RequestId = request.RequestId,
-                        Success = false,
-                        Error = new EchoFault { Text = "Missing payload", Reason = "InvalidPayload" }
-                    };
+                    return CreateErrorResponse(request.RequestId, Constants.MissingPayloadMessage, Constants.InvalidPayloadReason);
                 }
 
-                var payload = JsonSerializer.Deserialize<JsonElement>(request.Payload, JsonOptions);
+                var payload = JsonUtilities.SafeDeserialize<JsonElement>(request.Payload);
                 var result = await processor(payload);
                 
-                return new EchoResponse
-                {
-                    RequestId = request.RequestId,
-                    Success = true,
-                    Result = result
-                };
+                return CreateSuccessResponse(request.RequestId, result);
             }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Error processing complex method {Method}", request.Method);
-                return new EchoResponse
-                {
-                    RequestId = request.RequestId,
-                    Success = false,
-                    Error = new EchoFault { Text = ex.Message, Reason = "ComplexMethodError" }
-                };
+                return CreateErrorResponse(request.RequestId, ex.Message, Constants.ComplexMethodErrorReason);
             }
         }
     }

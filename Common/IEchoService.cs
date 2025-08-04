@@ -8,7 +8,6 @@ namespace Common
         Task<string?> ComplexEcho(EchoMessage message);
         Task<string> FailEcho(string text);
         Task<string> EchoForPermission(string text);
-        Task<EchoResponse> ProcessRequest(EchoRequest request);
         
         // New complex methods with multiple parameters and class transfers
         Task<UserProfile> ProcessUserProfile(UserProfile user, string operationId, bool validateOnly);

@@ -2,7 +2,7 @@ namespace Common
 {
     public class EchoRequest
     {
-        public string Method { get; set; } = string.Empty;
+        public ServiceMethodType Method { get; set; }
 
         public string? Payload { get; set; }
 

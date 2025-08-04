@@ -8,6 +8,14 @@ namespace Common
         public const int SecureTcpPort = 8443;
         public const int NetworkTimeoutMs = 100;
         
+        // Connection Management
+        public const int MaxConcurrentConnections = 20;
+        public const int ConnectionTimeoutMinutes = 5;
+        public const int HealthCheckIntervalSeconds = 30;
+        public const int RequestTimeoutSeconds = 30;
+        public const int ConnectionRetryDelayMs = 1000;
+        public const int MaxConnectionRetries = 3;
+        
         // User Profile Validation
         public const int MinUserAge = 0;
         public const int MaxUserAge = 150;
@@ -27,6 +35,8 @@ namespace Common
         public const string ComplexMethodErrorReason = "ComplexMethodError";
         public const string InvalidPayloadReason = "InvalidPayload";
         public const string FailReason = "FailReason";
+        public const string CapacityLimitReason = "CapacityLimit";
+        public const string ConnectionTimeoutReason = "ConnectionTimeout";
         
         // Operation Types
         public const string UpdateProfileOperation = "UPDATE_PROFILE";
@@ -63,6 +73,8 @@ namespace Common
         public const string MissingPayloadMessage = "Missing payload";
         public const string UnknownMethodMessage = "Unknown method";
         public const string UserNotificationSentMessage = "User notification sent for status update to {0}";
+        public const string ServerAtCapacityMessage = "Server at capacity";
+        public const string ConnectionTimeoutMessage = "Connection timeout";
         
         // Validation Messages
         public const string InvalidEmailMessage = "Invalid email format";

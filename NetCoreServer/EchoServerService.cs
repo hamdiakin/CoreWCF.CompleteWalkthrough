@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using NetMQ;
 using NetMQ.Sockets;
 using System.Text.Json;
+using System.Collections.Concurrent;
 
 namespace NetCoreServer
 {
@@ -11,32 +12,57 @@ namespace NetCoreServer
     {
         private readonly ILogger<EchoServerService> logger;
         private readonly IEchoService echoService;
+        private readonly ConcurrentDictionary<string, DateTime> activeConnections = new();
+        private readonly SemaphoreSlim connectionSemaphore;
 
         public EchoServerService(ILogger<EchoServerService> logger, IEchoService echoService)
         {
             this.logger = logger;
             this.echoService = echoService;
+            this.connectionSemaphore = new SemaphoreSlim(Constants.MaxConcurrentConnections, Constants.MaxConcurrentConnections);
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            logger.LogInformation("Starting ZeroMQ Echo Server...");
+            logger.LogInformation("Starting ZeroMQ Echo Server with 1-to-N support...");
 
-            using var server = new ResponseSocket();
+            using var server = new RouterSocket();
             server.Bind(AppConfig.TcpEndpoint);
 
             logger.LogInformation($"ZeroMQ server listening on {AppConfig.TcpEndpoint}");
+            logger.LogInformation($"Maximum concurrent connections: {Constants.MaxConcurrentConnections}");
             logger.LogInformation("Available methods: Echo, ComplexEcho, FailEcho, EchoForPermission, ProcessUserProfile, ValidateUserData, ProcessWithOptions, GetProcessingOptions, UpdateUserStatus, ProcessComplexData");
             logger.LogInformation("Press Ctrl+C to stop the server");
+
+            // Start connection cleanup task
+            _ = Task.Run(() => CleanupInactiveConnectionsAsync(stoppingToken), stoppingToken);
 
             while (!stoppingToken.IsCancellationRequested)
             {
                 try
                 {
-                    // Check if there's a message available (non-blocking)
-                    if (server.TryReceiveFrameString(TimeSpan.FromMilliseconds(Constants.NetworkTimeoutMs), out string? requestJson))
+                    // RouterSocket receives multipart messages: [identity][empty][data...]
+                    var message = new NetMQMessage();
+                    if (server.TryReceiveMultipartMessage(TimeSpan.FromMilliseconds(Constants.NetworkTimeoutMs), ref message))
                     {
-                        await ProcessMessageAsync(server, requestJson, stoppingToken);
+                        logger.LogDebug($"Received {message.FrameCount} frames from client");
+                        
+                        if (message.FrameCount >= 3) // [identity][empty][request]
+                        {
+                            var identity = message[0]; // Client identity (binary)
+                            var empty = message[1];    // Empty delimiter
+                            var requestFrame = message[2]; // Request JSON
+                            
+                            var requestJson = requestFrame.ConvertToString();
+                            logger.LogDebug($"Received request JSON: '{requestJson}'");
+                            
+                            // Process message asynchronously without blocking
+                            _ = Task.Run(async () => await ProcessMessageAsync(server, identity, requestJson, stoppingToken));
+                        }
+                        else
+                        {
+                            logger.LogWarning($"Invalid message format - received {message.FrameCount} frames, expected >= 3");
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -48,46 +74,151 @@ namespace NetCoreServer
             logger.LogInformation("ZeroMQ server stopping...");
         }
 
-        private async Task ProcessMessageAsync(ResponseSocket server, string requestJson, CancellationToken cancellationToken)
+        private async Task ProcessMessageAsync(RouterSocket server, NetMQFrame identity, string requestJson, CancellationToken cancellationToken)
         {
+            if (string.IsNullOrEmpty(requestJson))
+            {
+                logger.LogWarning("Received invalid message format");
+                return;
+            }
+
+            // Generate a temporary client ID for connection tracking
+            var clientId = $"temp_{Guid.NewGuid():N}";
+            
+            logger.LogInformation($"Processing message - ClientId: '{clientId}', RequestJson: '{requestJson}'");
+
+            // Check if we can accept this connection
+            if (!await TryAcquireConnectionSlotAsync(clientId))
+            {
+                logger.LogWarning($"Connection limit reached. Rejecting client {clientId}");
+                var errorResponse = CreateErrorResponse(string.Empty, Constants.ServerAtCapacityMessage, Constants.CapacityLimitReason);
+                var errorJson = JsonUtilities.SafeSerialize(errorResponse);
+                
+                server.SendFrame(errorJson);
+                return;
+            }
+
             try
             {
-                logger.LogDebug($"Received raw message: {requestJson}");
+                logger.LogDebug($"Received message from client {clientId}: {requestJson}");
+
+                // Validate that requestJson is valid JSON before trying to deserialize
+                logger.LogDebug($"Validating JSON: '{requestJson}'");
+                if (!JsonUtilities.IsValidJson(requestJson))
+                {
+                    logger.LogWarning($"Invalid JSON received from client {clientId}: {requestJson}");
+                    var errorResponse = CreateErrorResponse(string.Empty, "Invalid JSON format", Constants.InvalidJsonReason);
+                    await SendResponseAsync(server, identity, errorResponse);
+                    return;
+                }
 
                 var request = JsonUtilities.SafeDeserialize<EchoRequest>(requestJson);
                 if (request == null)
                 {
                     var errorResponse = CreateErrorResponse(string.Empty, Constants.InvalidComplexEchoPayloadMessage, Constants.InvalidJsonReason);
-                    var errorJson = JsonUtilities.SafeSerialize(errorResponse);
-                    server.SendFrame(errorJson);
+                    await SendResponseAsync(server, identity, errorResponse);
                     return;
                 }
 
-                logger.LogInformation($"Processing {request.Method} request (ID: {request.RequestId})");
+                logger.LogInformation($"Processing {request.Method} request from {clientId} (ID: {request.RequestId})");
 
                 // Call interface methods directly based on the method type
                 var response = await ProcessRequestDirectly(request);
 
                 // Send response
-                var responseJson = JsonUtilities.SafeSerialize(response);
-                server.SendFrame(responseJson);
+                await SendResponseAsync(server, identity, response);
 
-                logger.LogDebug($"Sent response: {responseJson}");
+                logger.LogDebug($"Sent response to {clientId}: {JsonUtilities.SafeSerialize(response)}");
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Error processing message");
+                logger.LogError(ex, "Error processing message from {ClientId}", clientId);
 
                 var errorResponse = CreateErrorResponse(string.Empty, ex.Message, Constants.ProcessingErrorReason);
+                await SendResponseAsync(server, identity, errorResponse);
+            }
+            finally
+            {
+                // Release the connection slot
+                ReleaseConnectionSlot(clientId);
+            }
+        }
 
+        private Task SendResponseAsync(RouterSocket server, NetMQFrame identity, EchoResponse response)
+        {
+            try
+            {
+                var responseJson = JsonUtilities.SafeSerialize(response);
+                
+                // RouterSocket sends: [identity][empty][response]
+                var responseMessage = new NetMQMessage();
+                responseMessage.Append(identity);           // Client identity for routing
+                responseMessage.Append(NetMQFrame.Empty);   // Empty delimiter
+                responseMessage.Append(responseJson);       // Response JSON
+                
+                logger.LogInformation($"Sending response for request {response.RequestId}");
+                
+                // Ensure thread-safe sending
+                lock (server)
+                {
+                    server.SendMultipartMessage(responseMessage);
+                }
+                
+                logger.LogInformation($"Response sent successfully for request {response.RequestId}");
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to send response for request {RequestId}", response?.RequestId);
+            }
+            return Task.CompletedTask;
+        }
+
+        private async Task<bool> TryAcquireConnectionSlotAsync(string clientId)
+        {
+            if (await connectionSemaphore.WaitAsync(TimeSpan.FromSeconds(1)))
+            {
+                activeConnections[clientId] = DateTime.UtcNow;
+                logger.LogDebug($"Connection acquired for {clientId}. Active connections: {activeConnections.Count}");
+                return true;
+            }
+            return false;
+        }
+
+        private void ReleaseConnectionSlot(string clientId)
+        {
+            activeConnections.TryRemove(clientId, out _);
+            connectionSemaphore.Release();
+            logger.LogDebug($"Connection released for {clientId}. Active connections: {activeConnections.Count}");
+        }
+
+        private async Task CleanupInactiveConnectionsAsync(CancellationToken cancellationToken)
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
                 try
                 {
-                    var errorJson = JsonUtilities.SafeSerialize(errorResponse);
-                    server.SendFrame(errorJson);
+                    var cutoffTime = DateTime.UtcNow.AddMinutes(-Constants.ConnectionTimeoutMinutes);
+                    var inactiveConnections = activeConnections
+                        .Where(kvp => kvp.Value < cutoffTime)
+                        .Select(kvp => kvp.Key)
+                        .ToList();
+
+                    foreach (var clientId in inactiveConnections)
+                    {
+                        activeConnections.TryRemove(clientId, out _);
+                        connectionSemaphore.Release();
+                        logger.LogInformation($"Cleaned up inactive connection: {clientId}");
+                    }
+
+                    await Task.Delay(TimeSpan.FromMinutes(1), cancellationToken);
                 }
-                catch (Exception sendEx)
+                catch (OperationCanceledException)
                 {
-                    logger.LogError(sendEx, "Failed to send error response");
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Error during connection cleanup");
                 }
             }
         }

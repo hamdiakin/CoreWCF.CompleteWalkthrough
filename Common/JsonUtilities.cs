@@ -63,8 +63,10 @@ namespace Common
             {
                 return JsonSerializer.Deserialize<T>(json, StandardOptions) ?? fallbackValue;
             }
-            catch (JsonException)
+            catch (Exception ex) when (ex is JsonException || ex is ArgumentException || ex is NotSupportedException)
             {
+                // Log the error for debugging
+                Console.WriteLine($"JSON deserialization failed for: '{json}' - Error: {ex.Message}");
                 return fallbackValue;
             }
         }
@@ -95,8 +97,9 @@ namespace Common
                 JsonDocument.Parse(json);
                 return true;
             }
-            catch (JsonException)
+            catch (Exception ex) when (ex is JsonException || ex is ArgumentException)
             {
+                Console.WriteLine($"JSON validation failed for: '{json}' - Error: {ex.Message}");
                 return false;
             }
         }

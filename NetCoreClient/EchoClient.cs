@@ -2,19 +2,30 @@
 using NetMQ;
 using NetMQ.Sockets;
 using System.Text.Json;
+using System.Collections.Concurrent;
 
 namespace NetCoreClient
 {
     public class EchoClient : IDisposable
     {
-        private readonly RequestSocket socket;
+        private readonly DealerSocket socket;
         private readonly object lockObject = new object();
+        private readonly Timer healthCheckTimer;
+        private volatile bool isConnected = false;
 
         public EchoClient()
         {
-            socket = new RequestSocket();
+
+            socket = new DealerSocket();
             socket.Connect(Constants.DefaultTcpEndpoint);
+            
+            // Using synchronous request-response pattern
+            
+            // Start health check timer
+            healthCheckTimer = new Timer(HealthCheckCallback, null, TimeSpan.FromSeconds(Constants.HealthCheckIntervalSeconds), TimeSpan.FromSeconds(Constants.HealthCheckIntervalSeconds));
         }
+
+
 
         #region Simple Echo Methods
 
@@ -203,11 +214,33 @@ namespace NetCoreClient
                 {
                     var requestJson = JsonUtilities.SafeSerialize(request);
 
-                    // Send request
-                    socket.SendFrame(requestJson);
+                    // DealerSocket sends: [empty][request] to RouterSocket
+                    var requestMessage = new NetMQMessage();
+                    requestMessage.Append(NetMQFrame.Empty);  // Empty delimiter
+                    requestMessage.Append(requestJson);       // Request JSON
+                    
+                    socket.SendMultipartMessage(requestMessage);
 
-                    // Receive response
-                    var responseJson = socket.ReceiveFrameString();
+                    // DealerSocket receives response from RouterSocket
+                    var responseMessage = socket.ReceiveMultipartMessage();
+                    
+                    // Find the last non-empty frame (which should contain the JSON response)
+                    string responseJson = "";
+                    for (int i = responseMessage.FrameCount - 1; i >= 0; i--)
+                    {
+                        var frameContent = responseMessage[i].ConvertToString();
+                        if (!string.IsNullOrEmpty(frameContent))
+                        {
+                            responseJson = frameContent;
+                            break;
+                        }
+                    }
+                    
+                    if (string.IsNullOrEmpty(responseJson))
+                    {
+                        throw new InvalidOperationException("No valid JSON response found in message");
+                    }
+                    
                     var response = JsonUtilities.SafeDeserialize<EchoResponse>(responseJson);
 
                     if (response == null)
@@ -225,9 +258,46 @@ namespace NetCoreClient
             });
         }
 
+
+
+        private void HealthCheckCallback(object? state)
+        {
+            try
+            {
+                // Send a simple ping to check connection health
+                var pingRequest = CreateSimpleRequest(ServiceMethodType.Echo, "ping");
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await SendRequestAsync(pingRequest);
+                        isConnected = true;
+                    }
+                    catch
+                    {
+                        isConnected = false;
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Health check failed: {ex.Message}");
+                isConnected = false;
+            }
+        }
+
+        public bool IsConnected => isConnected;
+
+        private bool disposed = false;
+
         public void Dispose()
         {
-            socket?.Dispose();
+            if (!disposed)
+            {
+                disposed = true;
+                healthCheckTimer?.Dispose();
+                socket?.Dispose();
+            }
         }
 
         #endregion

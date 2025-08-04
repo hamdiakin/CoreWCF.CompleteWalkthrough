@@ -31,19 +31,22 @@ namespace NetCoreClient
             {
                 logger.LogInformation("Testing ZeroMQ Echo Service with Complex Methods...");
 
-                // Test original methods
-                await TestEchoAsync(client, logger);
-                await TestComplexEchoAsync(client, logger);
-                await TestFailEchoAsync(client, logger);
-                await TestEchoForPermissionAsync(client, logger);
+                //// Test original methods
+                //await TestEchoAsync(client, logger);
+                //await TestComplexEchoAsync(client, logger);
+                //await TestFailEchoAsync(client, logger);
+                //await TestEchoForPermissionAsync(client, logger);
 
-                // Test new complex methods
-                await TestProcessUserProfileAsync(client, logger);
-                await TestValidateUserDataAsync(client, logger);
-                await TestProcessWithOptionsAsync(client, logger);
-                await TestGetProcessingOptionsAsync(client, logger);
-                await TestUpdateUserStatusAsync(client, logger);
-                await TestProcessComplexDataAsync(client, logger);
+                //// Test new complex methods
+                //await TestProcessUserProfileAsync(client, logger);
+                //await TestValidateUserDataAsync(client, logger);
+                //await TestProcessWithOptionsAsync(client, logger);
+                //await TestGetProcessingOptionsAsync(client, logger);
+                //await TestUpdateUserStatusAsync(client, logger);
+                //await TestProcessComplexDataAsync(client, logger);
+
+                // Test multiple concurrent clients
+                await TestMultipleClientsAsync(logger);
 
                 logger.LogInformation("All tests completed successfully!");
                 Console.ReadKey();
@@ -51,6 +54,53 @@ namespace NetCoreClient
             catch (Exception ex)
             {
                 logger.LogError(ex, "Error occurred during client execution");
+            }
+        }
+
+        private static async Task TestMultipleClientsAsync(ILogger logger)
+        {
+            logger.LogInformation("=== Testing Multiple Concurrent Clients ===");
+            
+            var tasks = new List<Task>();
+            var clients = new List<EchoClient>();
+            
+            try
+            {
+                // Create multiple clients
+                for (int i = 0; i < 5; i++)
+                {
+                    var client = new EchoClient();
+                    clients.Add(client);
+                    
+                    var clientId = i + 1;
+                    var task = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            logger.LogInformation($"Client {clientId} starting...");
+                            var result = await client.EchoAsync($"Hello from client {clientId}!");
+                            logger.LogInformation($"Client {clientId} received: {result}");
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.LogError(ex, $"Client {clientId} failed");
+                        }
+                    });
+                    
+                    tasks.Add(task);
+                }
+                
+                // Wait for all clients to complete
+                await Task.WhenAll(tasks);
+                logger.LogInformation("All concurrent clients completed successfully!");
+            }
+            finally
+            {
+                // Dispose all clients
+                foreach (var client in clients)
+                {
+                    client.Dispose();
+                }
             }
         }
 

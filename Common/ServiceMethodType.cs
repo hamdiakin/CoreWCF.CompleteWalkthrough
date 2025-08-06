@@ -14,6 +14,13 @@ namespace Common
         ProcessWithOptions,
         GetProcessingOptions,
         UpdateUserStatus,
-        ProcessComplexData
+        ProcessComplexData,
+        
+        // Animal-related polymorphic methods
+        ProcessAnimal,
+        GetAnimalInfo,
+        MakeAnimalSound,
+        ProcessAnimalGroup,
+        GetAllAnimals
     }
 } 

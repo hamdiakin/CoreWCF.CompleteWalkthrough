@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Common
 {
@@ -14,7 +15,8 @@ namespace Common
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             WriteIndented = false,
-            PropertyNameCaseInsensitive = true
+            PropertyNameCaseInsensitive = true,
+            Converters = { new JsonStringEnumConverter() }
         };
 
         /// <summary>
@@ -24,7 +26,8 @@ namespace Common
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             WriteIndented = true,
-            PropertyNameCaseInsensitive = true
+            PropertyNameCaseInsensitive = true,
+            Converters = { new JsonStringEnumConverter() }
         };
 
         /// <summary>
@@ -80,6 +83,31 @@ namespace Common
         public static T SafeDeserializeWithNew<T>(string json) where T : new()
         {
             return SafeDeserialize(json, new T());
+        }
+
+        /// <summary>
+        /// Safely deserializes polymorphic types (like Animal and its derived types)
+        /// </summary>
+        /// <typeparam name="T">Base type to deserialize to</typeparam>
+        /// <param name="json">JSON string to deserialize</param>
+        /// <param name="fallbackValue">Value to return if deserialization fails</param>
+        /// <returns>Deserialized object or fallback value</returns>
+        public static T SafeDeserializePolymorphic<T>(string json, T fallbackValue = default!) where T : class
+        {
+            if (string.IsNullOrWhiteSpace(json))
+                return fallbackValue;
+
+            try
+            {
+                // Use the same options but ensure polymorphic deserialization works
+                return JsonSerializer.Deserialize<T>(json, StandardOptions) ?? fallbackValue;
+            }
+            catch (Exception ex) when (ex is JsonException || ex is ArgumentException || ex is NotSupportedException)
+            {
+                // Log the error for debugging
+                Console.WriteLine($"Polymorphic JSON deserialization failed for: '{json}' - Error: {ex.Message}");
+                return fallbackValue;
+            }
         }
 
         /// <summary>

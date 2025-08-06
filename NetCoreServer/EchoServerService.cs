@@ -1,4 +1,5 @@
 ﻿using Common;
+using Common.Animals;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using NetMQ;
@@ -298,6 +299,23 @@ namespace NetCoreServer
             });
         }
 
+        // Helper method for processing simple methods with no payload
+        private async Task<EchoResponse> ProcessSimpleMethodAsync<T>(EchoRequest request, Func<Task<T>> processor)
+        {
+            try
+            {
+                // No payload validation needed for simple methods
+                var result = await processor();
+                var resultJson = JsonUtilities.SafeSerialize(result);
+                return CreateSuccessResponse(request.RequestId, resultJson);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error processing simple method {Method}", request.Method);
+                return CreateErrorResponse(request.RequestId, ex.Message, Constants.ProcessingErrorReason);
+            }
+        }
+
         private async Task<EchoResponse> ProcessRequestDirectly(EchoRequest request)
         {
             try
@@ -314,6 +332,12 @@ namespace NetCoreServer
                     ServiceMethodType.GetProcessingOptions => await ProcessGetProcessingOptionsMethodAsync(request),
                     ServiceMethodType.UpdateUserStatus => await ProcessUpdateUserStatusMethodAsync(request),
                     ServiceMethodType.ProcessComplexData => await ProcessComplexDataMethodAsync(request),
+                    // Animal methods
+                    ServiceMethodType.ProcessAnimal => await ProcessAnimalMethodAsync(request),
+                    ServiceMethodType.GetAnimalInfo => await ProcessGetAnimalInfoMethodAsync(request),
+                    ServiceMethodType.MakeAnimalSound => await ProcessMakeAnimalSoundMethodAsync(request),
+                    ServiceMethodType.ProcessAnimalGroup => await ProcessAnimalGroupMethodAsync(request),
+                    ServiceMethodType.GetAllAnimals => await ProcessGetAllAnimalsAsync(request),
                     _ => CreateErrorResponse(request.RequestId, $"{Constants.UnknownMethodMessage}: {request.Method}", Constants.InvalidMethodReason)
                 };
             }
@@ -466,5 +490,120 @@ namespace NetCoreServer
                 return CreateErrorResponse(request.RequestId, ex.Message, Constants.ComplexMethodErrorReason);
             }
         }
+
+        #region Animal Processing Methods
+
+        private async Task<EchoResponse> ProcessAnimalMethodAsync(EchoRequest request)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(request.Payload))
+                {
+                    return CreateErrorResponse(request.RequestId, Constants.MissingPayloadMessage, Constants.InvalidPayloadReason);
+                }
+
+                var animal = JsonUtilities.SafeDeserializePolymorphic<Animal>(request.Payload);
+                if (animal == null)
+                {
+                    return CreateErrorResponse(request.RequestId, "Invalid animal data", Constants.InvalidJsonReason);
+                }
+
+                var processedAnimal = await echoService.ProcessAnimal(animal);
+                var result = JsonUtilities.SafeSerialize(processedAnimal);
+                return CreateSuccessResponse(request.RequestId, result);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error processing animal");
+                return CreateErrorResponse(request.RequestId, ex.Message, Constants.ProcessingErrorReason);
+            }
+        }
+
+        private async Task<EchoResponse> ProcessGetAnimalInfoMethodAsync(EchoRequest request)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(request.Payload))
+                {
+                    return CreateErrorResponse(request.RequestId, Constants.MissingPayloadMessage, Constants.InvalidPayloadReason);
+                }
+
+                var animal = JsonUtilities.SafeDeserializePolymorphic<Animal>(request.Payload);
+                if (animal == null)
+                {
+                    return CreateErrorResponse(request.RequestId, "Invalid animal data", Constants.InvalidJsonReason);
+                }
+
+                var result = await echoService.GetAnimalInfo(animal);
+                return CreateSuccessResponse(request.RequestId, result);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error getting animal info");
+                return CreateErrorResponse(request.RequestId, ex.Message, Constants.ProcessingErrorReason);
+            }
+        }
+
+        private async Task<EchoResponse> ProcessMakeAnimalSoundMethodAsync(EchoRequest request)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(request.Payload))
+                {
+                    return CreateErrorResponse(request.RequestId, Constants.MissingPayloadMessage, Constants.InvalidPayloadReason);
+                }
+
+                var animal = JsonUtilities.SafeDeserializePolymorphic<Animal>(request.Payload);
+                if (animal == null)
+                {
+                    return CreateErrorResponse(request.RequestId, "Invalid animal data", Constants.InvalidJsonReason);
+                }
+
+                var result = await echoService.MakeAnimalSound(animal);
+                return CreateSuccessResponse(request.RequestId, result);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error making animal sound");
+                return CreateErrorResponse(request.RequestId, ex.Message, Constants.ProcessingErrorReason);
+            }
+        }
+
+        private async Task<EchoResponse> ProcessAnimalGroupMethodAsync(EchoRequest request)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(request.Payload))
+                {
+                    return CreateErrorResponse(request.RequestId, Constants.MissingPayloadMessage, Constants.InvalidPayloadReason);
+                }
+
+                var animals = JsonUtilities.SafeDeserializePolymorphic<List<Animal>>(request.Payload);
+                if (animals == null || animals.Count == 0)
+                {
+                    return CreateErrorResponse(request.RequestId, "Invalid or empty animal group data", Constants.InvalidJsonReason);
+                }
+
+                var result = await echoService.ProcessAnimalGroup(animals);
+                var resultJson = JsonUtilities.SafeSerialize(result);
+                return CreateSuccessResponse(request.RequestId, resultJson);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error processing animal group");
+                return CreateErrorResponse(request.RequestId, ex.Message, Constants.ProcessingErrorReason);
+            }
+        }
+
+        private async Task<EchoResponse> ProcessGetAllAnimalsAsync(EchoRequest request)
+        {
+            return await ProcessSimpleMethodAsync(request, async () =>
+            {
+                var result = await echoService.GetAllAnimals();
+                return result;
+            });
+        }
+
+        #endregion
     }
 }

@@ -1,4 +1,5 @@
 ﻿using Common;
+using Common.Animals;
 using NetMQ;
 using NetMQ.Sockets;
 using System.Text.Json;
@@ -144,6 +145,66 @@ namespace NetCoreClient
             var request = CreateComplexRequest(ServiceMethodType.ProcessComplexData, payload);
             var response = await SendRequestAsync(request);
             return DeserializeResponse<Dictionary<string, object>>(response);
+        }
+
+        #endregion
+
+        #region Animal Methods
+
+        /// <summary>
+        /// Processes any animal type polymorphically
+        /// </summary>
+        public async Task<Animal?> ProcessAnimalAsync(Animal animal)
+        {
+            var request = CreateComplexRequest(ServiceMethodType.ProcessAnimal, animal);
+            var response = await SendRequestAsync(request);
+            
+            if (response.Success && !string.IsNullOrWhiteSpace(response.Result))
+            {
+                return JsonUtilities.SafeDeserializePolymorphic<Animal>(response.Result);
+            }
+            
+            return null;
+        }
+
+        /// <summary>
+        /// Gets information about any animal
+        /// </summary>
+        public async Task<string> GetAnimalInfoAsync(Animal animal)
+        {
+            var request = CreateComplexRequest(ServiceMethodType.GetAnimalInfo, animal);
+            var response = await SendRequestAsync(request);
+            return GetStringResult(response);
+        }
+
+        /// <summary>
+        /// Makes an animal sound
+        /// </summary>
+        public async Task<string> MakeAnimalSoundAsync(Animal animal)
+        {
+            var request = CreateComplexRequest(ServiceMethodType.MakeAnimalSound, animal);
+            var response = await SendRequestAsync(request);
+            return GetStringResult(response);
+        }
+
+        /// <summary>
+        /// Processes a group of animals
+        /// </summary>
+        public async Task<Dictionary<string, object>> ProcessAnimalGroupAsync(List<Animal> animals)
+        {
+            var request = CreateComplexRequest(ServiceMethodType.ProcessAnimalGroup, animals);
+            var response = await SendRequestAsync(request);
+            return DeserializeResponse<Dictionary<string, object>>(response);
+        }
+        
+        /// <summary>
+        /// Gets all animals from the server
+        /// </summary>
+        public async Task<List<Animal>> GetAllAnimalsAsync()
+        {
+            var request = CreateSimpleRequest(ServiceMethodType.GetAllAnimals, string.Empty);
+            var response = await SendRequestAsync(request);
+            return DeserializeResponse<List<Animal>>(response);
         }
 
         #endregion

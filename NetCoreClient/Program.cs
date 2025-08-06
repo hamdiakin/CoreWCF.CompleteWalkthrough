@@ -1,4 +1,5 @@
 ﻿using Common;
+using Common.Animals;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -45,6 +46,13 @@ namespace NetCoreClient
                 //await TestUpdateUserStatusAsync(client, logger);
                 //await TestProcessComplexDataAsync(client, logger);
 
+                // Test polymorphic animals
+                using var animalTestClient = new EchoClient();
+                await TestPolymorphicAnimalsAsync(animalTestClient, logger);
+                
+                // Test getting all animals
+                await TestGetAllAnimalsAsync(animalTestClient, logger);
+                
                 // Test multiple concurrent clients
                 await TestMultipleClientsAsync(logger);
 
@@ -323,6 +331,134 @@ namespace NetCoreClient
             catch (Exception ex)
             {
                 logger.LogError(ex, "ProcessComplexData failed");
+            }
+        }
+
+        /// <summary>
+        /// Demonstrates polymorphic animal processing
+        /// </summary>
+        private static async Task TestPolymorphicAnimalsAsync(EchoClient client, ILogger logger)
+        {
+            logger.LogInformation("=== Testing Polymorphic Animals ===");
+
+            try
+            {
+                // Create different types of animals
+                var animals = new List<Animal>
+                {
+                    new Dog
+                    {
+                        Name = "Buddy",
+                        Age = 3,
+                        Species = "Golden Retriever",
+                        Type = AnimalType.Dog,
+                        Breed = "Golden Retriever",
+                        IsGoodBoy = true
+                    },
+                    new Cat
+                    {
+                        Name = "Whiskers",
+                        Age = 2,
+                        Species = "Persian Cat",
+                        Type = AnimalType.Cat,
+                        Color = "Orange",
+                        IsIndoor = true,
+                        LivesRemaining = 9
+                    },
+                    new Bird
+                    {
+                        Name = "Tweety",
+                        Age = 1,
+                        Species = "Canary",
+                        Type = AnimalType.Bird,
+                        WingSpan = 15.5,
+                        CanFly = true,
+                        FeatherColor = "Yellow"
+                    },
+                    new Mouse
+                    {
+                        Name = "Jerry",
+                        Age = 1,
+                        Species = "House Mouse",
+                        Type = AnimalType.Mouse,
+                        Size = 8.5,
+                        IsNocturnal = true,
+                        FavoriteFood = "Cheese"
+                    }
+                };
+
+                // Test individual animal processing
+                logger.LogInformation("--- Processing Individual Animals ---");
+                foreach (var animal in animals)
+                {
+                    logger.LogInformation("Processing {AnimalType}: {Name}", animal.GetType().Name, animal.Name);
+
+                    // Test polymorphic serialization/deserialization
+                    var processedAnimal = await client.ProcessAnimalAsync(animal);
+                    if (processedAnimal != null)
+                    {
+                        logger.LogInformation("✅ Processed: {Info}", processedAnimal.GetInfo());
+                    }
+
+                    // Test getting animal info
+                    var info = await client.GetAnimalInfoAsync(animal);
+                    logger.LogInformation("ℹ️ Info: {Info}", info);
+
+                    // Test making sounds
+                    var sound = await client.MakeAnimalSoundAsync(animal);
+                    logger.LogInformation("🔊 Sound: {Sound}", sound);
+
+                    logger.LogInformation("");
+                }
+
+                // Test group processing
+                logger.LogInformation("--- Processing Animal Group ---");
+                var groupResult = await client.ProcessAnimalGroupAsync(animals);
+                
+                logger.LogInformation("📊 Group Results:");
+                logger.LogInformation("   Total Animals: {Total}", groupResult.GetValueOrDefault("totalAnimals"));
+                
+                if (groupResult.TryGetValue("animalTypes", out var typesObj) && typesObj is Dictionary<string, object> types)
+                {
+                    logger.LogInformation("   Animal Types:");
+                    foreach (var kvp in types)
+                    {
+                        logger.LogInformation("     - {Type}: {Count}", kvp.Key, kvp.Value);
+                    }
+                }
+
+                if (groupResult.TryGetValue("sounds", out var soundsObj) && soundsObj is List<object> sounds)
+                {
+                    logger.LogInformation("   All Sounds:");
+                    foreach (var sound in sounds)
+                    {
+                        logger.LogInformation("     🔊 {Sound}", sound);
+                    }
+                }
+
+                logger.LogInformation("✅ Polymorphic animal processing completed successfully!");
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "❌ Polymorphic animal processing failed");
+            }
+        }
+
+        private static async Task TestGetAllAnimalsAsync(EchoClient client, ILogger logger)
+        {
+            logger.LogInformation("=== Testing GetAllAnimals method ===");
+            try
+            {
+                var animals = await client.GetAllAnimalsAsync();
+                logger.LogInformation("Retrieved {Count} animals from the server:", animals.Count);
+                foreach (var animal in animals)
+                {
+                    logger.LogInformation(" - {Name} ({Type})", animal.Name, animal.GetType().Name);
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "GetAllAnimals failed");
             }
         }
     }

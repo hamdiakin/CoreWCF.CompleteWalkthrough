@@ -1,4 +1,5 @@
 ﻿using System.Threading.Tasks;
+using Common.Animals;
 
 namespace Common
 {
@@ -16,5 +17,12 @@ namespace Common
         Task<ProcessingOptions> GetProcessingOptions(string profileType, bool includeAdvanced);
         Task<bool> UpdateUserStatus(UserProfile user, string newStatus, bool notifyUser, int priority);
         Task<Dictionary<string, object>> ProcessComplexData(UserProfile user, ProcessingOptions options, string operation, bool dryRun);
+        
+        // Animal processing methods
+        Task<Animal> ProcessAnimal(Animal animal);
+        Task<string> GetAnimalInfo(Animal animal);
+        Task<string> MakeAnimalSound(Animal animal);
+        Task<Dictionary<string, object>> ProcessAnimalGroup(List<Animal> animals);
+        Task<List<Animal>> GetAllAnimals();
     }
 }

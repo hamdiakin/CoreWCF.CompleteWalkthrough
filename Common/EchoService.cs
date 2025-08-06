@@ -3,6 +3,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using System;
 using Common;
+using Common.Animals;
 
 public class EchoService : IEchoService
 {
@@ -217,6 +218,136 @@ public class EchoService : IEchoService
         return await Task.FromResult(result);
     }
 
+    #region Animal Processing Methods
+
+    /// <summary>
+    /// Processes any animal polymorphically - demonstrates polymorphic serialization
+    /// </summary>
+    public async Task<Animal> ProcessAnimal(Animal animal)
+    {
+        ArgumentNullException.ThrowIfNull(animal);
+        
+        logger.LogInformation("Processing {AnimalType}: {Name}", animal.GetType().Name, animal.Name);
+        
+        // Simulate processing - add some metadata based on animal type
+        switch (animal)
+        {
+            case Dog dog:
+                dog.IsGoodBoy = true;
+                logger.LogInformation("Dog {Name} is definitely a good boy!", dog.Name);
+                break;
+                
+            case Cat cat:
+                cat.LivesRemaining = Math.Max(1, cat.LivesRemaining - 1);
+                logger.LogInformation("Cat {Name} now has {Lives} lives remaining", cat.Name, cat.LivesRemaining);
+                break;
+                
+            case Bird bird:
+                if (bird.CanFly)
+                {
+                    logger.LogInformation("Bird {Name} is ready to soar!", bird.Name);
+                }
+                break;
+                
+            case Mouse mouse:
+                mouse.FavoriteFood = "Premium Cheese";
+                logger.LogInformation("Mouse {Name} has been upgraded to premium cheese!", mouse.Name);
+                break;
+        }
+        
+        return await Task.FromResult(animal);
+    }
+
+    /// <summary>
+    /// Gets information about any animal type
+    /// </summary>
+    public async Task<string> GetAnimalInfo(Animal animal)
+    {
+        ArgumentNullException.ThrowIfNull(animal);
+        
+        logger.LogInformation("Getting info for {AnimalType}: {Name}", animal.GetType().Name, animal.Name);
+        
+        var info = animal.GetInfo();
+        var sound = animal.MakeSound();
+        
+        return await Task.FromResult($"{info} - Says: '{sound}'");
+    }
+
+    /// <summary>
+    /// Makes an animal sound
+    /// </summary>
+    public async Task<string> MakeAnimalSound(Animal animal)
+    {
+        ArgumentNullException.ThrowIfNull(animal);
+        
+        logger.LogInformation("Making sound for {AnimalType}: {Name}", animal.GetType().Name, animal.Name);
+        
+        var sound = animal.MakeSound();
+        return await Task.FromResult($"{animal.Name} says: {sound}");
+    }
+
+    /// <summary>
+    /// Processes a group of animals (demonstrates collections of polymorphic objects)
+    /// </summary>
+    public async Task<Dictionary<string, object>> ProcessAnimalGroup(List<Animal> animals)
+    {
+        ArgumentNullException.ThrowIfNull(animals);
+        
+        logger.LogInformation("Processing group of {Count} animals", animals.Count);
+        
+        var result = new Dictionary<string, object>
+        {
+            ["totalAnimals"] = animals.Count,
+            ["processedAt"] = DateTime.UtcNow,
+            ["animalTypes"] = new Dictionary<string, int>(),
+            ["animalDetails"] = new List<Dictionary<string, object>>(),
+            ["sounds"] = new List<string>()
+        };
+        
+        var animalTypes = (Dictionary<string, int>)result["animalTypes"];
+        var animalDetails = (List<Dictionary<string, object>>)result["animalDetails"];
+        var sounds = (List<string>)result["sounds"];
+        
+        foreach (var animal in animals)
+        {
+            var typeName = animal.GetType().Name;
+            animalTypes[typeName] = animalTypes.GetValueOrDefault(typeName, 0) + 1;
+            
+            animalDetails.Add(new Dictionary<string, object>
+            {
+                ["name"] = animal.Name,
+                ["type"] = typeName,
+                ["age"] = animal.Age,
+                ["species"] = animal.Species,
+                ["info"] = animal.GetInfo()
+            });
+            
+            sounds.Add($"{animal.Name}: {animal.MakeSound()}");
+        }
+        
+        return await Task.FromResult(result);
+    }
+
+    /// <summary>
+    /// Returns a list of all available animal types
+    /// </summary>
+    public async Task<List<Animal>> GetAllAnimals()
+    {
+        logger.LogInformation("Getting all animals");
+
+        var animals = new List<Animal>
+        {
+            new Dog { Name = "Fido", Age = 3, Species = "Golden Retriever", Type = AnimalType.Dog, Breed = "Golden Retriever", IsGoodBoy = true },
+            new Cat { Name = "Whiskers", Age = 5, Species = "Persian Cat", Type = AnimalType.Cat, Color = "Gray", LivesRemaining = 9 },
+            new Bird { Name = "Polly", Age = 2, Species = "Parrot", Type = AnimalType.Bird, CanFly = true },
+            new Mouse { Name = "Squeaky", Age = 1, Species = "House Mouse", Type = AnimalType.Mouse, FavoriteFood = "Cheese" }
+        };
+
+        return await Task.FromResult(animals);
+    }
+
+    #endregion
+
     public async Task<EchoResponse> ProcessRequest(EchoRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -272,6 +403,109 @@ public class EchoService : IEchoService
 
                 case ServiceMethodType.EchoForPermission:
                     response.Result = await EchoForPermission(request.Payload ?? string.Empty);
+                    break;
+
+                // Animal processing methods
+                case ServiceMethodType.ProcessAnimal:
+                    if (!string.IsNullOrWhiteSpace(request.Payload))
+                    {
+                        try
+                        {
+                            var animal = JsonUtilities.SafeDeserializePolymorphic<Animal>(request.Payload);
+                            if (animal != null)
+                            {
+                                var processedAnimal = await ProcessAnimal(animal);
+                                response.Result = JsonUtilities.SafeSerialize(processedAnimal);
+                            }
+                            else
+                            {
+                                response.Success = false;
+                                response.Error = new EchoFault { Text = "Invalid animal data", Reason = "DeserializationError" };
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.LogError(ex, "Failed to process animal from payload");
+                            response.Success = false;
+                            response.Error = new EchoFault { Text = ex.Message, Reason = "ProcessingError" };
+                        }
+                    }
+                    break;
+
+                case ServiceMethodType.GetAnimalInfo:
+                    if (!string.IsNullOrWhiteSpace(request.Payload))
+                    {
+                        try
+                        {
+                            var animal = JsonUtilities.SafeDeserializePolymorphic<Animal>(request.Payload);
+                            if (animal != null)
+                            {
+                                response.Result = await GetAnimalInfo(animal);
+                            }
+                            else
+                            {
+                                response.Success = false;
+                                response.Error = new EchoFault { Text = "Invalid animal data", Reason = "DeserializationError" };
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.LogError(ex, "Failed to get animal info from payload");
+                            response.Success = false;
+                            response.Error = new EchoFault { Text = ex.Message, Reason = "ProcessingError" };
+                        }
+                    }
+                    break;
+
+                case ServiceMethodType.MakeAnimalSound:
+                    if (!string.IsNullOrWhiteSpace(request.Payload))
+                    {
+                        try
+                        {
+                            var animal = JsonUtilities.SafeDeserializePolymorphic<Animal>(request.Payload);
+                            if (animal != null)
+                            {
+                                response.Result = await MakeAnimalSound(animal);
+                            }
+                            else
+                            {
+                                response.Success = false;
+                                response.Error = new EchoFault { Text = "Invalid animal data", Reason = "DeserializationError" };
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.LogError(ex, "Failed to make animal sound from payload");
+                            response.Success = false;
+                            response.Error = new EchoFault { Text = ex.Message, Reason = "ProcessingError" };
+                        }
+                    }
+                    break;
+
+                case ServiceMethodType.ProcessAnimalGroup:
+                    if (!string.IsNullOrWhiteSpace(request.Payload))
+                    {
+                        try
+                        {
+                            var animals = JsonUtilities.SafeDeserializePolymorphic<List<Animal>>(request.Payload);
+                            if (animals != null && animals.Count > 0)
+                            {
+                                var result = await ProcessAnimalGroup(animals);
+                                response.Result = JsonUtilities.SafeSerialize(result);
+                            }
+                            else
+                            {
+                                response.Success = false;
+                                response.Error = new EchoFault { Text = "Invalid or empty animal group data", Reason = "DeserializationError" };
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.LogError(ex, "Failed to process animal group from payload");
+                            response.Success = false;
+                            response.Error = new EchoFault { Text = ex.Message, Reason = "ProcessingError" };
+                        }
+                    }
                     break;
 
                 default:

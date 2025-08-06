@@ -4,7 +4,8 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using NetMQ;
 using NetMQ.Sockets;
-using System.Text.Json;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using System.Collections.Concurrent;
 
 namespace NetCoreServer
@@ -47,16 +48,16 @@ namespace NetCoreServer
                     if (server.TryReceiveMultipartMessage(TimeSpan.FromMilliseconds(Constants.NetworkTimeoutMs), ref message))
                     {
                         logger.LogDebug($"Received {message.FrameCount} frames from client");
-                        
+
                         if (message.FrameCount >= 3) // [identity][empty][request]
                         {
                             var identity = message[0]; // Client identity (binary)
                             var empty = message[1];    // Empty delimiter
                             var requestFrame = message[2]; // Request JSON
-                            
+
                             var requestJson = requestFrame.ConvertToString();
                             logger.LogDebug($"Received request JSON: '{requestJson}'");
-                            
+
                             // Process message asynchronously without blocking
                             _ = Task.Run(async () => await ProcessMessageAsync(server, identity, requestJson, stoppingToken));
                         }
@@ -85,7 +86,7 @@ namespace NetCoreServer
 
             // Generate a temporary client ID for connection tracking
             var clientId = $"temp_{Guid.NewGuid():N}";
-            
+
             logger.LogInformation($"Processing message - ClientId: '{clientId}', RequestJson: '{requestJson}'");
 
             // Check if we can accept this connection
@@ -94,7 +95,7 @@ namespace NetCoreServer
                 logger.LogWarning($"Connection limit reached. Rejecting client {clientId}");
                 var errorResponse = CreateErrorResponse(string.Empty, Constants.ServerAtCapacityMessage, Constants.CapacityLimitReason);
                 var errorJson = JsonUtilities.SafeSerialize(errorResponse);
-                
+
                 server.SendFrame(errorJson);
                 return;
             }
@@ -113,7 +114,7 @@ namespace NetCoreServer
                     return;
                 }
 
-                var request = JsonUtilities.SafeDeserialize<EchoRequest>(requestJson);
+                var request = JsonUtilities.SafeDeserialize<EchoRequest>(requestJson, null!);
                 if (request == null)
                 {
                     var errorResponse = CreateErrorResponse(string.Empty, Constants.InvalidComplexEchoPayloadMessage, Constants.InvalidJsonReason);
@@ -150,21 +151,21 @@ namespace NetCoreServer
             try
             {
                 var responseJson = JsonUtilities.SafeSerialize(response);
-                
+
                 // RouterSocket sends: [identity][empty][response]
                 var responseMessage = new NetMQMessage();
                 responseMessage.Append(identity);           // Client identity for routing
                 responseMessage.Append(NetMQFrame.Empty);   // Empty delimiter
                 responseMessage.Append(responseJson);       // Response JSON
-                
+
                 logger.LogInformation($"Sending response for request {response.RequestId}");
-                
+
                 // Ensure thread-safe sending
                 lock (server)
                 {
                     server.SendMultipartMessage(responseMessage);
                 }
-                
+
                 logger.LogInformation($"Response sent successfully for request {response.RequestId}");
             }
             catch (Exception ex)
@@ -253,7 +254,7 @@ namespace NetCoreServer
         // Helper method to deserialize JSON payload safely
         private T? DeserializePayload<T>(string payload) where T : class
         {
-            var result = JsonUtilities.SafeDeserialize<T>(payload);
+            var result = JsonUtilities.SafeDeserialize<T>(payload, null!);
             if (result == null)
             {
                 logger.LogError("Failed to deserialize payload to {Type}", typeof(T).Name);
@@ -261,10 +262,14 @@ namespace NetCoreServer
             return result;
         }
 
-        // Helper method to extract property from JsonElement safely
-        private static T? GetPropertyValue<T>(JsonElement payload, string propertyName)
+        // Helper method to extract property from JObject safely
+        private static T? GetPropertyValue<T>(JObject payload, string propertyName)
         {
-            return JsonUtilities.SafeGetProperty<T?>(payload, propertyName);
+            if (payload.TryGetValue(propertyName, StringComparison.OrdinalIgnoreCase, out var value))
+            {
+                return value.ToObject<T>();
+            }
+            return default;
         }
 
         // Helper method to serialize objects to JSON
@@ -276,11 +281,11 @@ namespace NetCoreServer
         // Helper method to convert results to strings safely
         private static string ConvertToString<T>(T value)
         {
-            return JsonUtilities.SafeToString(value);
+            return value.SafeToString();
         }
 
         // Helper method for processing complex methods with object serialization
-        private async Task<EchoResponse> ProcessComplexMethodWithSerialization<T>(EchoRequest request, Func<JsonElement, Task<T>> processor)
+        private async Task<EchoResponse> ProcessComplexMethodWithSerialization<T>(EchoRequest request, Func<JObject, Task<T>> processor)
         {
             return await ProcessComplexMethodAsync(request, async (payload) =>
             {
@@ -290,7 +295,7 @@ namespace NetCoreServer
         }
 
         // Helper method for processing complex methods with string conversion
-        private async Task<EchoResponse> ProcessComplexMethodWithStringConversion<T>(EchoRequest request, Func<JsonElement, Task<T>> processor)
+        private async Task<EchoResponse> ProcessComplexMethodWithStringConversion<T>(EchoRequest request, Func<JObject, Task<T>> processor)
         {
             return await ProcessComplexMethodAsync(request, async (payload) =>
             {
@@ -470,7 +475,7 @@ namespace NetCoreServer
             });
         }
 
-        private async Task<EchoResponse> ProcessComplexMethodAsync(EchoRequest request, Func<JsonElement, Task<string>> processor)
+        private async Task<EchoResponse> ProcessComplexMethodAsync(EchoRequest request, Func<JObject, Task<string>> processor)
         {
             try
             {
@@ -479,9 +484,14 @@ namespace NetCoreServer
                     return CreateErrorResponse(request.RequestId, Constants.MissingPayloadMessage, Constants.InvalidPayloadReason);
                 }
 
-                var payload = JsonUtilities.SafeDeserialize<JsonElement>(request.Payload);
+                var payload = JsonUtilities.SafeDeserialize<JObject>(request.Payload, null!);
+                if (payload == null)
+                {
+                    return CreateErrorResponse(request.RequestId, "Invalid JSON payload", Constants.InvalidJsonReason);
+                }
+
                 var result = await processor(payload);
-                
+
                 return CreateSuccessResponse(request.RequestId, result);
             }
             catch (Exception ex)
@@ -502,7 +512,7 @@ namespace NetCoreServer
                     return CreateErrorResponse(request.RequestId, Constants.MissingPayloadMessage, Constants.InvalidPayloadReason);
                 }
 
-                var animal = JsonUtilities.SafeDeserializePolymorphic<Animal>(request.Payload);
+                var animal = JsonUtilities.SafeDeserialize<Animal>(request.Payload, null!);
                 if (animal == null)
                 {
                     return CreateErrorResponse(request.RequestId, "Invalid animal data", Constants.InvalidJsonReason);
@@ -528,7 +538,7 @@ namespace NetCoreServer
                     return CreateErrorResponse(request.RequestId, Constants.MissingPayloadMessage, Constants.InvalidPayloadReason);
                 }
 
-                var animal = JsonUtilities.SafeDeserializePolymorphic<Animal>(request.Payload);
+                var animal = JsonUtilities.SafeDeserialize<Animal>(request.Payload, null!);
                 if (animal == null)
                 {
                     return CreateErrorResponse(request.RequestId, "Invalid animal data", Constants.InvalidJsonReason);
@@ -553,7 +563,7 @@ namespace NetCoreServer
                     return CreateErrorResponse(request.RequestId, Constants.MissingPayloadMessage, Constants.InvalidPayloadReason);
                 }
 
-                var animal = JsonUtilities.SafeDeserializePolymorphic<Animal>(request.Payload);
+                var animal = JsonUtilities.SafeDeserialize<Animal>(request.Payload, null!);
                 if (animal == null)
                 {
                     return CreateErrorResponse(request.RequestId, "Invalid animal data", Constants.InvalidJsonReason);
@@ -578,7 +588,7 @@ namespace NetCoreServer
                     return CreateErrorResponse(request.RequestId, Constants.MissingPayloadMessage, Constants.InvalidPayloadReason);
                 }
 
-                var animals = JsonUtilities.SafeDeserializePolymorphic<List<Animal>>(request.Payload);
+                var animals = JsonUtilities.SafeDeserialize<List<Animal>>(request.Payload, null!);
                 if (animals == null || animals.Count == 0)
                 {
                     return CreateErrorResponse(request.RequestId, "Invalid or empty animal group data", Constants.InvalidJsonReason);

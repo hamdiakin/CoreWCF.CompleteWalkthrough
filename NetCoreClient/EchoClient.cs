@@ -2,7 +2,7 @@
 using Common.Animals;
 using NetMQ;
 using NetMQ.Sockets;
-using System.Text.Json;
+using Newtonsoft.Json;
 using System.Collections.Concurrent;
 
 namespace NetCoreClient
@@ -16,14 +16,22 @@ namespace NetCoreClient
 
         public EchoClient()
         {
+            try
+            {
+                socket = new DealerSocket();
+                socket.Connect(Constants.DefaultTcpEndpoint);
 
-            socket = new DealerSocket();
-            socket.Connect(Constants.DefaultTcpEndpoint);
-            
-            // Using synchronous request-response pattern
-            
-            // Start health check timer
-            healthCheckTimer = new Timer(HealthCheckCallback, null, TimeSpan.FromSeconds(Constants.HealthCheckIntervalSeconds), TimeSpan.FromSeconds(Constants.HealthCheckIntervalSeconds));
+                // Using synchronous request-response pattern
+
+                // Start health check timer
+                healthCheckTimer = new Timer(HealthCheckCallback, null, TimeSpan.FromSeconds(Constants.HealthCheckIntervalSeconds), TimeSpan.FromSeconds(Constants.HealthCheckIntervalSeconds));
+            }
+            catch (Exception ex)
+            {
+                socket?.Dispose();
+                healthCheckTimer?.Dispose();
+                throw new InvalidOperationException($"Failed to initialize EchoClient: {ex.Message}", ex);
+            }
         }
 
 
@@ -158,12 +166,12 @@ namespace NetCoreClient
         {
             var request = CreateComplexRequest(ServiceMethodType.ProcessAnimal, animal);
             var response = await SendRequestAsync(request);
-            
+
             if (response.Success && !string.IsNullOrWhiteSpace(response.Result))
             {
-                return JsonUtilities.SafeDeserializePolymorphic<Animal>(response.Result);
+                return JsonUtilities.SafeDeserialize<Animal>(response.Result, null!);
             }
-            
+
             return null;
         }
 
@@ -196,7 +204,7 @@ namespace NetCoreClient
             var response = await SendRequestAsync(request);
             return DeserializeResponse<Dictionary<string, object>>(response);
         }
-        
+
         /// <summary>
         /// Gets all animals from the server
         /// </summary>
@@ -279,12 +287,12 @@ namespace NetCoreClient
                     var requestMessage = new NetMQMessage();
                     requestMessage.Append(NetMQFrame.Empty);  // Empty delimiter
                     requestMessage.Append(requestJson);       // Request JSON
-                    
+
                     socket.SendMultipartMessage(requestMessage);
 
                     // DealerSocket receives response from RouterSocket
                     var responseMessage = socket.ReceiveMultipartMessage();
-                    
+
                     // Find the last non-empty frame (which should contain the JSON response)
                     string responseJson = "";
                     for (int i = responseMessage.FrameCount - 1; i >= 0; i--)
@@ -296,13 +304,13 @@ namespace NetCoreClient
                             break;
                         }
                     }
-                    
+
                     if (string.IsNullOrEmpty(responseJson))
                     {
                         throw new InvalidOperationException("No valid JSON response found in message");
                     }
-                    
-                    var response = JsonUtilities.SafeDeserialize<EchoResponse>(responseJson);
+
+                    var response = JsonUtilities.SafeDeserialize<EchoResponse>(responseJson, null!);
 
                     if (response == null)
                     {
@@ -358,6 +366,7 @@ namespace NetCoreClient
                 disposed = true;
                 healthCheckTimer?.Dispose();
                 socket?.Dispose();
+                GC.SuppressFinalize(this);
             }
         }
 

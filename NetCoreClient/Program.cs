@@ -49,10 +49,10 @@ namespace NetCoreClient
                 // Test polymorphic animals
                 using var animalTestClient = new EchoClient();
                 await TestPolymorphicAnimalsAsync(animalTestClient, logger);
-                
+
                 // Test getting all animals
                 await TestGetAllAnimalsAsync(animalTestClient, logger);
-                
+
                 // Test multiple concurrent clients
                 await TestMultipleClientsAsync(logger);
 
@@ -68,10 +68,10 @@ namespace NetCoreClient
         private static async Task TestMultipleClientsAsync(ILogger logger)
         {
             logger.LogInformation("=== Testing Multiple Concurrent Clients ===");
-            
+
             var tasks = new List<Task>();
             var clients = new List<EchoClient>();
-            
+
             try
             {
                 // Create multiple clients
@@ -79,7 +79,7 @@ namespace NetCoreClient
                 {
                     var client = new EchoClient();
                     clients.Add(client);
-                    
+
                     var clientId = i + 1;
                     var task = Task.Run(async () =>
                     {
@@ -94,10 +94,10 @@ namespace NetCoreClient
                             logger.LogError(ex, $"Client {clientId} failed");
                         }
                     });
-                    
+
                     tasks.Add(task);
                 }
-                
+
                 // Wait for all clients to complete
                 await Task.WhenAll(tasks);
                 logger.LogInformation("All concurrent clients completed successfully!");
@@ -181,7 +181,7 @@ namespace NetCoreClient
             {
                 var user = TestDataFactory.CreateTestUser1();
                 var result = await client.ProcessUserProfileAsync(user, Constants.UpdateProfileOperation, false);
-                logger.LogInformation("Processed User Profile - ID: {Id}, Name: {Name}, Roles: {Roles}", 
+                logger.LogInformation("Processed User Profile - ID: {Id}, Name: {Name}, Roles: {Roles}",
                     result.Id, result.Name, string.Join(", ", result.Roles));
             }
             catch (Exception ex)
@@ -207,9 +207,9 @@ namespace NetCoreClient
                 };
 
                 var result = await client.ValidateUserDataAsync(user, true, 5);
-                logger.LogInformation("Validation Result - IsValid: {IsValid}, Errors: {ErrorCount}, Warnings: {WarningCount}", 
+                logger.LogInformation("Validation Result - IsValid: {IsValid}, Errors: {ErrorCount}, Warnings: {WarningCount}",
                     result.IsValid, result.Errors.Count, result.Warnings.Count);
-                
+
                 if (result.Errors.Any())
                 {
                     logger.LogWarning("Validation Errors: {Errors}", string.Join(", ", result.Errors));
@@ -254,10 +254,10 @@ namespace NetCoreClient
             try
             {
                 var result = await client.GetProcessingOptionsAsync("Premium", true);
-                logger.LogInformation("Processing Options - Mode: {Mode}, MaxRetries: {MaxRetries}, Timeout: {Timeout}s", 
+                logger.LogInformation("Processing Options - Mode: {Mode}, MaxRetries: {MaxRetries}, Timeout: {Timeout}s",
                     result.ProcessingMode, result.MaxRetries, result.Timeout.TotalSeconds);
-                
-                logger.LogInformation("Custom Settings: {Settings}", 
+
+                logger.LogInformation("Custom Settings: {Settings}",
                     string.Join(", ", result.CustomSettings.Select(kvp => $"{kvp.Key}={kvp.Value}")));
             }
             catch (Exception ex)
@@ -325,7 +325,7 @@ namespace NetCoreClient
                 };
 
                 var result = await client.ProcessComplexDataAsync(user, options, "DATA_MIGRATION", false);
-                logger.LogInformation("Complex data processing completed - Status: {Status}, User: {UserName}, Operation: {Operation}", 
+                logger.LogInformation("Complex data processing completed - Status: {Status}, User: {UserName}, Operation: {Operation}",
                     result.GetValueOrDefault("status"), result.GetValueOrDefault("userName"), result.GetValueOrDefault("operation"));
             }
             catch (Exception ex)
@@ -414,10 +414,10 @@ namespace NetCoreClient
                 // Test group processing
                 logger.LogInformation("--- Processing Animal Group ---");
                 var groupResult = await client.ProcessAnimalGroupAsync(animals);
-                
+
                 logger.LogInformation("📊 Group Results:");
                 logger.LogInformation("   Total Animals: {Total}", groupResult.GetValueOrDefault("totalAnimals"));
-                
+
                 if (groupResult.TryGetValue("animalTypes", out var typesObj) && typesObj is Dictionary<string, object> types)
                 {
                     logger.LogInformation("   Animal Types:");
@@ -450,7 +450,7 @@ namespace NetCoreClient
             try
             {
                 var animals = await client.GetAllAnimalsAsync();
-                logger.LogInformation("Retrieved {Count} animals from the server:", animals.Count);
+                logger.LogInformation("Retrieved {Count} animals from the server", animals.Count);
                 foreach (var animal in animals)
                 {
                     logger.LogInformation(" - {Name} ({Type})", animal.Name, animal.GetType().Name);

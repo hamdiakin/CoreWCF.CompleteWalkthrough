@@ -1,4 +1,4 @@
-using System.Text.Json.Serialization;
+using Newtonsoft.Json;
 
 namespace Common.Animals
 {
@@ -9,7 +9,6 @@ namespace Common.Animals
         public int LivesRemaining { get; set; } = 9;
 
         // Parameterless constructor for JSON deserialization
-        [JsonConstructor]
         public Cat() { }
         
         public override string MakeSound()

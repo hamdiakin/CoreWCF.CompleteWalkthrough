@@ -1,5 +1,8 @@
-using System.Text.Json;
-using System.Text.Json.Serialization;
+#nullable enable
+using Newtonsoft.Json;
+using Newtonsoft.Json.Converters;
+using Newtonsoft.Json.Serialization;
+using Newtonsoft.Json.Linq;
 
 namespace Common
 {
@@ -8,173 +11,149 @@ namespace Common
     /// </summary>
     public static class JsonUtilities
     {
-        /// <summary>
-        /// Standard JSON serialization options used throughout the application
-        /// </summary>
-        public static readonly JsonSerializerOptions StandardOptions = new()
+        private static JsonSerializerSettings CreateSettings(Formatting formatting = Formatting.None)
         {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            WriteIndented = false,
-            PropertyNameCaseInsensitive = true,
-            Converters = { new JsonStringEnumConverter() }
-        };
+            return new JsonSerializerSettings
+            {
+                ContractResolver = new CamelCasePropertyNamesContractResolver(),
+                Converters = { new StringEnumConverter() },
+                Formatting = formatting,
+                TypeNameHandling = TypeNameHandling.All
+            };
+        }
 
         /// <summary>
-        /// Pretty-printed JSON options for debugging and logging
+        /// Standard JSON serialization settings used throughout the application
         /// </summary>
-        public static readonly JsonSerializerOptions PrettyOptions = new()
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            WriteIndented = true,
-            PropertyNameCaseInsensitive = true,
-            Converters = { new JsonStringEnumConverter() }
-        };
+        public static readonly JsonSerializerSettings StandardSettings = CreateSettings();
+
+        /// <summary>
+        /// Pretty-printed JSON settings for debugging and logging
+        /// </summary>
+        public static readonly JsonSerializerSettings PrettySettings = CreateSettings(Formatting.Indented);
 
         /// <summary>
         /// Safely serializes an object to JSON string
         /// </summary>
-        /// <typeparam name="T">Type of object to serialize</typeparam>
-        /// <param name="obj">Object to serialize</param>
-        /// <param name="pretty">Whether to use pretty formatting</param>
-        /// <returns>JSON string or empty string if serialization fails</returns>
         public static string SafeSerialize<T>(T obj, bool pretty = false)
         {
             try
             {
-                var options = pretty ? PrettyOptions : StandardOptions;
-                return JsonSerializer.Serialize(obj, options);
+                return JsonConvert.SerializeObject(obj, pretty ? PrettySettings : StandardSettings);
             }
-            catch (JsonException)
+            catch (Exception)
             {
                 return string.Empty;
             }
         }
 
         /// <summary>
-        /// Safely deserializes JSON string to specified type
+        /// Safely deserializes JSON string to specified type with polymorphic support.
+        /// Returns the fallback value if deserialization fails or input is invalid.
+        /// For reference types, fallbackValue must be provided explicitly.
         /// </summary>
-        /// <typeparam name="T">Type to deserialize to</typeparam>
-        /// <param name="json">JSON string to deserialize</param>
-        /// <param name="fallbackValue">Value to return if deserialization fails</param>
-        /// <returns>Deserialized object or fallback value</returns>
-        public static T SafeDeserialize<T>(string json, T fallbackValue = default!)
+        public static T SafeDeserialize<T>(string json, T fallbackValue)
         {
             if (string.IsNullOrWhiteSpace(json))
                 return fallbackValue;
-
             try
             {
-                return JsonSerializer.Deserialize<T>(json, StandardOptions) ?? fallbackValue;
+                return JsonConvert.DeserializeObject<T>(json, StandardSettings) ?? fallbackValue;
             }
-            catch (Exception ex) when (ex is JsonException || ex is ArgumentException || ex is NotSupportedException)
+            catch (Exception)
             {
-                // Log the error for debugging
-                Console.WriteLine($"JSON deserialization failed for: '{json}' - Error: {ex.Message}");
                 return fallbackValue;
+            }
+        }
+        // Overload for value types
+        public static T SafeDeserialize<T>(string json) where T : struct
+        {
+            if (string.IsNullOrWhiteSpace(json))
+                return default;
+            try
+            {
+                return JsonConvert.DeserializeObject<T>(json, StandardSettings);
+            }
+            catch (Exception)
+            {
+                return default;
             }
         }
 
         /// <summary>
         /// Safely deserializes JSON string to specified type with new instance fallback
         /// </summary>
-        /// <typeparam name="T">Type to deserialize to (must have parameterless constructor)</typeparam>
-        /// <param name="json">JSON string to deserialize</param>
-        /// <returns>Deserialized object or new instance</returns>
         public static T SafeDeserializeWithNew<T>(string json) where T : new()
         {
-            return SafeDeserialize(json, new T());
+            if (string.IsNullOrWhiteSpace(json))
+                return new T();
+            try
+            {
+                return JsonConvert.DeserializeObject<T>(json, StandardSettings) ?? new T();
+            }
+            catch (Exception)
+            {
+                return new T();
+            }
         }
 
         /// <summary>
-        /// Safely deserializes polymorphic types (like Animal and its derived types)
+        /// Safely extracts a property value from a JSON object. For reference types, fallbackValue must be provided explicitly.
         /// </summary>
-        /// <typeparam name="T">Base type to deserialize to</typeparam>
-        /// <param name="json">JSON string to deserialize</param>
-        /// <param name="fallbackValue">Value to return if deserialization fails</param>
-        /// <returns>Deserialized object or fallback value</returns>
-        public static T SafeDeserializePolymorphic<T>(string json, T fallbackValue = default!) where T : class
+        public static T SafeGetProperty<T>(string json, string propertyName, T fallbackValue)
         {
-            if (string.IsNullOrWhiteSpace(json))
+            if (string.IsNullOrWhiteSpace(json) || string.IsNullOrWhiteSpace(propertyName))
                 return fallbackValue;
-
             try
             {
-                // Use the same options but ensure polymorphic deserialization works
-                return JsonSerializer.Deserialize<T>(json, StandardOptions) ?? fallbackValue;
-            }
-            catch (Exception ex) when (ex is JsonException || ex is ArgumentException || ex is NotSupportedException)
-            {
-                // Log the error for debugging
-                Console.WriteLine($"Polymorphic JSON deserialization failed for: '{json}' - Error: {ex.Message}");
+                var jsonObject = JsonConvert.DeserializeObject<JObject>(json, StandardSettings);
+                if (jsonObject != null && jsonObject.TryGetValue(propertyName, StringComparison.OrdinalIgnoreCase, out var value))
+                {
+                    return value.ToObject<T>() ?? fallbackValue;
+                }
                 return fallbackValue;
+            }
+            catch (Exception)
+            {
+                return fallbackValue;
+            }
+        }
+        // Overload for value types
+        public static T SafeGetProperty<T>(string json, string propertyName) where T : struct
+        {
+            if (string.IsNullOrWhiteSpace(json) || string.IsNullOrWhiteSpace(propertyName))
+                return default;
+            try
+            {
+                var jsonObject = JsonConvert.DeserializeObject<JObject>(json, StandardSettings);
+                if (jsonObject != null && jsonObject.TryGetValue(propertyName, StringComparison.OrdinalIgnoreCase, out var value))
+                {
+                    return value.ToObject<T>();
+                }
+                return default;
+            }
+            catch (Exception)
+            {
+                return default;
             }
         }
 
         /// <summary>
         /// Validates if a string is valid JSON
         /// </summary>
-        /// <param name="json">String to validate</param>
-        /// <returns>True if valid JSON, false otherwise</returns>
         public static bool IsValidJson(string json)
         {
             if (string.IsNullOrWhiteSpace(json))
                 return false;
-
             try
             {
-                JsonDocument.Parse(json);
+                JsonConvert.DeserializeObject(json);
                 return true;
             }
-            catch (Exception ex) when (ex is JsonException || ex is ArgumentException)
+            catch (Exception)
             {
-                Console.WriteLine($"JSON validation failed for: '{json}' - Error: {ex.Message}");
                 return false;
             }
         }
-
-        /// <summary>
-        /// Safely extracts a property value from JsonElement
-        /// </summary>
-        /// <typeparam name="T">Type of property to extract</typeparam>
-        /// <param name="element">JsonElement to extract from</param>
-        /// <param name="propertyName">Name of property to extract</param>
-        /// <param name="fallbackValue">Value to return if extraction fails</param>
-        /// <returns>Property value or fallback value</returns>
-        public static T SafeGetProperty<T>(JsonElement element, string propertyName, T fallbackValue = default!)
-        {
-            if (!element.TryGetProperty(propertyName, out var property))
-                return fallbackValue;
-
-            try
-            {
-                return typeof(T) switch
-                {
-                    var t when t == typeof(string) => (T)(object)(property.GetString() ?? string.Empty),
-                    var t when t == typeof(bool) => (T)(object)property.GetBoolean(),
-                    var t when t == typeof(int) => (T)(object)property.GetInt32(),
-                    var t when t == typeof(long) => (T)(object)property.GetInt64(),
-                    var t when t == typeof(double) => (T)(object)property.GetDouble(),
-                    var t when t == typeof(decimal) => (T)(object)property.GetDecimal(),
-                    var t when t == typeof(DateTime) => (T)(object)property.GetDateTime(),
-                    var t when t == typeof(Guid) => (T)(object)property.GetGuid(),
-                    _ => JsonSerializer.Deserialize<T>(property.GetRawText(), StandardOptions) ?? fallbackValue
-                };
-            }
-            catch (JsonException)
-            {
-                return fallbackValue;
-            }
-        }
-
-        /// <summary>
-        /// Converts any value to string safely
-        /// </summary>
-        /// <typeparam name="T">Type of value to convert</typeparam>
-        /// <param name="value">Value to convert</param>
-        /// <returns>String representation or empty string</returns>
-        public static string SafeToString<T>(T value)
-        {
-            return value?.ToString() ?? string.Empty;
-        }
     }
-} 
+}

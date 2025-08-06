@@ -1,4 +1,4 @@
-using System.Text.Json.Serialization;
+using Newtonsoft.Json;
 
 namespace Common.Animals
 {
@@ -9,7 +9,6 @@ namespace Common.Animals
         public string FeatherColor { get; set; } = string.Empty;
 
         // Parameterless constructor for JSON deserialization
-        [JsonConstructor]
         public Bird() { }
         
         public override string MakeSound()

@@ -1,4 +1,4 @@
-using System.Text.Json.Serialization;
+using Newtonsoft.Json;
 
 namespace Common.Animals
 {
@@ -9,7 +9,6 @@ namespace Common.Animals
         public string FavoriteFood { get; set; } = "Cheese";
 
         // Parameterless constructor for JSON deserialization
-        [JsonConstructor]
         public Mouse() { }
         
         public override string MakeSound()

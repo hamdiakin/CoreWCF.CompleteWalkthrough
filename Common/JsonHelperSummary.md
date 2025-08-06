@@ -10,11 +10,13 @@ This document summarizes all the JSON serialization and response helper methods 
 
 #### Key Methods:
 - `SafeSerialize<T>(T obj, bool pretty = false)` - Safe JSON serialization with error handling
-- `SafeDeserialize<T>(string json, T fallbackValue = default!)` - Safe deserialization with fallback
+- `SafeDeserialize<T>(string json, T fallbackValue)` - Safe deserialization with explicit fallback (reference types)
+- `SafeDeserialize<T>(string json) where T : struct` - Safe deserialization for value types
 - `SafeDeserializeWithNew<T>(string json) where T : new()` - Safe deserialization with new instance fallback
 - `IsValidJson(string json)` - JSON validation
-- `SafeGetProperty<T>(JsonElement element, string propertyName, T fallbackValue = default!)` - Safe property extraction
-- `SafeToString<T>(T value)` - Safe string conversion
+- `SafeGetProperty<T>(string json, string propertyName, T fallbackValue)` - Safe property extraction with explicit fallback
+- `SafeGetProperty<T>(string json, string propertyName) where T : struct` - Safe property extraction for value types
+- `SafeToString<T>(T value)` - Safe string conversion (extension method in StringExtensions)
 
 #### Features:
 - ✅ **Consistent Options**: Standardized camelCase naming policy

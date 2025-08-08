@@ -24,5 +24,6 @@ namespace Common
         Task<string> MakeAnimalSound(Animal animal);
         Task<Dictionary<string, object>> ProcessAnimalGroup(List<Animal> animals);
         Task<List<Animal>> GetAllAnimals();
+        Task<List<Animal>> GetAnimalsByType(AnimalType type);
     }
 }

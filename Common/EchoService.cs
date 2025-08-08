@@ -459,6 +459,13 @@ namespace Common
             return await Task.FromResult(animals);
         }
 
+        public async Task<List<Animal>> GetAnimalsByType(AnimalType type)
+        {
+            var allAnimals = await GetAllAnimals();
+            var filtered = allAnimals.FindAll(a => a.Type == type);
+            return filtered;
+        }
+
         #endregion
 
         public async Task<EchoResponse> ProcessRequest(EchoRequest request)

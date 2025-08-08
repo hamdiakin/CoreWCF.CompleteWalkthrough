@@ -34,8 +34,6 @@ namespace NetCoreClient
             }
         }
 
-
-
         #region Simple Echo Methods
 
         public async Task<string> EchoAsync(string text)
@@ -211,6 +209,13 @@ namespace NetCoreClient
         public async Task<List<Animal>> GetAllAnimalsAsync()
         {
             var request = CreateSimpleRequest(ServiceMethodType.GetAllAnimals, string.Empty);
+            var response = await SendRequestAsync(request);
+            return DeserializeResponse<List<Animal>>(response);
+        }
+
+        public async Task<List<Animal>> GetAnimalsByTypeAsync(AnimalType type)
+        {
+            var request = CreateComplexRequest(ServiceMethodType.GetAnimalsByType, type);
             var response = await SendRequestAsync(request);
             return DeserializeResponse<List<Animal>>(response);
         }

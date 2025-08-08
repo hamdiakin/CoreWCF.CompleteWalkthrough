@@ -12,11 +12,17 @@ namespace NetCoreServer
 
         static async Task Main(string[] args)
         {
-            Console.Title = "ZeroMQ Echo Server";
+            Console.Title = "ZeroMQ Echo Server with Integrated Inventory Notifications";
 
             try
             {
                 var host = CreateHostBuilder(args).Build();
+                
+                Console.WriteLine("Starting ZeroMQ Echo Server with integrated inventory notifications...");
+                Console.WriteLine("The server will handle both echo requests and publish inventory notifications.");
+                Console.WriteLine("Press Ctrl+C to stop the server");
+
+                // Run the host (this will start the EchoServerService which includes the publisher)
                 await host.RunAsync();
             }
             catch (Exception ex)

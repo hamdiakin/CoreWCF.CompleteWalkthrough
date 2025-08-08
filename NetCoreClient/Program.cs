@@ -3,6 +3,7 @@ using Common.Animals;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using NetCoreClient;
 
 namespace NetCoreClient
 {
@@ -30,33 +31,14 @@ namespace NetCoreClient
 
             try
             {
-                logger.LogInformation("Testing ZeroMQ Echo Service with Complex Methods...");
+                // Test ZeroMQ Inventory Notifications
+                logger.LogInformation("\n=== Testing ZeroMQ Inventory Notifications ===");
+                await TestInventoryNotificationsAsync(logger);
 
-                //// Test original methods
-                //await TestEchoAsync(client, logger);
-                //await TestComplexEchoAsync(client, logger);
-                //await TestFailEchoAsync(client, logger);
-                //await TestEchoForPermissionAsync(client, logger);
+                // Test Continuous Notifications
+                logger.LogInformation("\n=== Testing Continuous Notifications ===");
+                await NotificationTest.RunNotificationTestAsync(logger);
 
-                //// Test new complex methods
-                //await TestProcessUserProfileAsync(client, logger);
-                //await TestValidateUserDataAsync(client, logger);
-                //await TestProcessWithOptionsAsync(client, logger);
-                //await TestGetProcessingOptionsAsync(client, logger);
-                //await TestUpdateUserStatusAsync(client, logger);
-                //await TestProcessComplexDataAsync(client, logger);
-
-                // Test polymorphic animals
-                using var animalTestClient = new EchoClient();
-                await TestPolymorphicAnimalsAsync(animalTestClient, logger);
-
-                // Test getting all animals
-                await TestGetAllAnimalsAsync(animalTestClient, logger);
-
-                // Test multiple concurrent clients
-                await TestMultipleClientsAsync(logger);
-
-                logger.LogInformation("All tests completed successfully!");
                 Console.ReadKey();
             }
             catch (Exception ex)
@@ -65,6 +47,39 @@ namespace NetCoreClient
             }
         }
 
+        private static async Task TestInventoryNotificationsAsync(ILogger logger)
+        {
+            logger.LogInformation("Starting Inventory Notification Subscriber...");
+
+            using var subscriber = new InventoryNotificationSubscriber("tcp://localhost:5556");
+            
+            // Subscribe to inventory changes
+            subscriber.OnInventoryChanged += message =>
+            {
+                logger.LogInformation($"\n[RECEIVED] {DateTime.Now:HH:mm:ss}");
+                logger.LogInformation($"  Entity: {message.EntityName}");
+                logger.LogInformation($"  Change: {message.ChangeType}");
+                logger.LogInformation($"  ID: {message.EntityId}");
+                logger.LogInformation($"  Details: {message.Details}");
+                logger.LogInformation("  " + new string('-', 40));
+            };
+
+            // Subscribe and start listening
+            subscriber.Subscribe();
+            logger.LogInformation("Subscribed to inventory changes. Listening for notifications...");
+            logger.LogInformation("Press Enter to unsubscribe and exit.");
+            logger.LogInformation("");
+
+            // Keep the application running for 30 seconds to test notifications
+            await Task.Delay(30000);
+
+            // Cleanup
+            subscriber.Unsubscribe();
+            subscriber.StopListening();
+            logger.LogInformation("Unsubscribed and stopped listening.");
+        }
+
+        #region Test Methods
         private static async Task TestMultipleClientsAsync(ILogger logger)
         {
             logger.LogInformation("=== Testing Multiple Concurrent Clients ===");
@@ -449,7 +464,8 @@ namespace NetCoreClient
             logger.LogInformation("=== Testing GetAllAnimals method ===");
             try
             {
-                var animals = await client.GetAllAnimalsAsync();
+                //var animals = await client.GetAllAnimalsAsync();
+                var animals = await client.GetAnimalsByTypeAsync(AnimalType.Dog);
                 logger.LogInformation("Retrieved {Count} animals from the server", animals.Count);
                 foreach (var animal in animals)
                 {
@@ -461,5 +477,40 @@ namespace NetCoreClient
                 logger.LogError(ex, "GetAllAnimals failed");
             }
         }
+        #endregion
+
+        #region Tests
+        //private async Task TestExceptNotification()
+        //{
+        //    logger.LogInformation("Testing ZeroMQ Echo Service with Complex Methods...");
+
+        //    // Test original methods
+        //    await TestEchoAsync(client, logger);
+        //    await TestComplexEchoAsync(client, logger);
+        //    await TestFailEchoAsync(client, logger);
+        //    await TestEchoForPermissionAsync(client, logger);
+
+        //    // Test new complex methods
+        //    await TestProcessUserProfileAsync(client, logger);
+        //    await TestValidateUserDataAsync(client, logger);
+        //    await TestProcessWithOptionsAsync(client, logger);
+        //    await TestGetProcessingOptionsAsync(client, logger);
+        //    await TestUpdateUserStatusAsync(client, logger);
+        //    await TestProcessComplexDataAsync(client, logger);
+
+        //    // Test polymorphic animals
+        //    using var animalTestClient = new EchoClient();
+        //    await TestPolymorphicAnimalsAsync(animalTestClient, logger);
+
+        //    // Test getting all animals
+        //    await TestGetAllAnimalsAsync(animalTestClient, logger);
+
+        //    // Test multiple concurrent clients
+        //    await TestMultipleClientsAsync(logger);
+
+        //    logger.LogInformation("All tests completed successfully!");
+        //}
+        #endregion Tests
+
     }
 }

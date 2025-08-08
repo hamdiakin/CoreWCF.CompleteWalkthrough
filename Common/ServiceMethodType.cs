@@ -21,6 +21,7 @@ namespace Common
         GetAnimalInfo,
         MakeAnimalSound,
         ProcessAnimalGroup,
-        GetAllAnimals
+        GetAllAnimals,
+        GetAnimalsByType
     }
 } 

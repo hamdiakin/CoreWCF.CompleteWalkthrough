@@ -10,34 +10,46 @@ using System.Collections.Concurrent;
 
 namespace NetCoreServer
 {
-    public class EchoServerService : BackgroundService
+    public class EchoServerService : BackgroundService, IDisposable
     {
         private readonly ILogger<EchoServerService> logger;
         private readonly IEchoService echoService;
+        private readonly InventoryNotificationPublisher publisher;
         private readonly ConcurrentDictionary<string, DateTime> activeConnections = new();
+        private readonly ConcurrentDictionary<string, NetMQFrame> connectedClients = new();
         private readonly SemaphoreSlim connectionSemaphore;
+        private RouterSocket? server;
+        private bool disposed = false;
 
         public EchoServerService(ILogger<EchoServerService> logger, IEchoService echoService)
         {
             this.logger = logger;
             this.echoService = echoService;
+            this.publisher = new InventoryNotificationPublisher();
             this.connectionSemaphore = new SemaphoreSlim(Constants.MaxConcurrentConnections, Constants.MaxConcurrentConnections);
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            logger.LogInformation("Starting ZeroMQ Echo Server with 1-to-N support...");
+            logger.LogInformation("Starting ZeroMQ Echo Server with 1-to-N support and Inventory Notifications...");
 
-            using var server = new RouterSocket();
+            server = new RouterSocket();
             server.Bind(AppConfig.TcpEndpoint);
 
             logger.LogInformation($"ZeroMQ server listening on {AppConfig.TcpEndpoint}");
             logger.LogInformation($"Maximum concurrent connections: {Constants.MaxConcurrentConnections}");
             logger.LogInformation("Available methods: Echo, ComplexEcho, FailEcho, EchoForPermission, ProcessUserProfile, ValidateUserData, ProcessWithOptions, GetProcessingOptions, UpdateUserStatus, ProcessComplexData");
+            logger.LogInformation("Inventory notifications are being published...");
             logger.LogInformation("Press Ctrl+C to stop the server");
 
             // Start connection cleanup task
             _ = Task.Run(() => CleanupInactiveConnectionsAsync(stoppingToken), stoppingToken);
+
+            // Start inventory notification publishing task
+            _ = Task.Run(() => PublishInventoryNotificationsAsync(stoppingToken), stoppingToken);
+
+            // Start continuous client notification task
+            _ = Task.Run(() => SendContinuousNotificationsAsync(stoppingToken), stoppingToken);
 
             while (!stoppingToken.IsCancellationRequested)
             {
@@ -58,8 +70,11 @@ namespace NetCoreServer
                             var requestJson = requestFrame.ConvertToString();
                             logger.LogDebug($"Received request JSON: '{requestJson}'");
 
+                            // Track client connection
+                            TrackClientConnection(identity);
+
                             // Process message asynchronously without blocking
-                            _ = Task.Run(async () => await ProcessMessageAsync(server, identity, requestJson, stoppingToken));
+                            _ = Task.Run(async () => await ProcessMessageAsync(identity, requestJson, stoppingToken));
                         }
                         else
                         {
@@ -76,7 +91,46 @@ namespace NetCoreServer
             logger.LogInformation("ZeroMQ server stopping...");
         }
 
-        private async Task ProcessMessageAsync(RouterSocket server, NetMQFrame identity, string requestJson, CancellationToken cancellationToken)
+        private async Task PublishInventoryNotificationsAsync(CancellationToken cancellationToken)
+        {
+            logger.LogInformation("Starting inventory notification publisher...");
+
+            // Test data for inventory notifications
+            var testData = new[]
+            {
+                new InventoryChangedMessage { EntityName = "Product", ChangeType = "Added", EntityId = "P001", Details = "New product added" },
+                new InventoryChangedMessage { EntityName = "Product", ChangeType = "Updated", EntityId = "P002", Details = "Product updated" },
+                new InventoryChangedMessage { EntityName = "Category", ChangeType = "Deleted", EntityId = "C001", Details = "Category deleted" },
+                new InventoryChangedMessage { EntityName = "Supplier", ChangeType = "Added", EntityId = "S001", Details = "New supplier added" }
+            };
+
+            int index = 0;
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                try
+                {
+                    var message = testData[index % testData.Length];
+                    publisher.PublishInventoryChanged(message);
+                    logger.LogInformation($"Published inventory notification: {message.EntityName} - {message.ChangeType} - {message.EntityId}");
+
+                    index++;
+                    await Task.Delay(3000, cancellationToken); // Wait 3 seconds between messages
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Error publishing inventory notification");
+                    await Task.Delay(1000, cancellationToken); // Wait before retrying
+                }
+            }
+
+            logger.LogInformation("Inventory notification publisher stopped");
+        }
+
+        private async Task ProcessMessageAsync(NetMQFrame identity, string requestJson, CancellationToken cancellationToken)
         {
             if (string.IsNullOrEmpty(requestJson))
             {
@@ -94,9 +148,7 @@ namespace NetCoreServer
             {
                 logger.LogWarning($"Connection limit reached. Rejecting client {clientId}");
                 var errorResponse = CreateErrorResponse(string.Empty, Constants.ServerAtCapacityMessage, Constants.CapacityLimitReason);
-                var errorJson = JsonUtilities.SafeSerialize(errorResponse);
-
-                server.SendFrame(errorJson);
+                await SendResponseAsync(identity, errorResponse);
                 return;
             }
 
@@ -110,7 +162,7 @@ namespace NetCoreServer
                 {
                     logger.LogWarning($"Invalid JSON received from client {clientId}: {requestJson}");
                     var errorResponse = CreateErrorResponse(string.Empty, "Invalid JSON format", Constants.InvalidJsonReason);
-                    await SendResponseAsync(server, identity, errorResponse);
+                    await SendResponseAsync(identity, errorResponse);
                     return;
                 }
 
@@ -118,7 +170,7 @@ namespace NetCoreServer
                 if (request == null)
                 {
                     var errorResponse = CreateErrorResponse(string.Empty, Constants.InvalidComplexEchoPayloadMessage, Constants.InvalidJsonReason);
-                    await SendResponseAsync(server, identity, errorResponse);
+                    await SendResponseAsync(identity, errorResponse);
                     return;
                 }
 
@@ -128,7 +180,7 @@ namespace NetCoreServer
                 var response = await ProcessRequestDirectly(request);
 
                 // Send response
-                await SendResponseAsync(server, identity, response);
+                await SendResponseAsync(identity, response);
 
                 logger.LogDebug($"Sent response to {clientId}: {JsonUtilities.SafeSerialize(response)}");
             }
@@ -137,7 +189,7 @@ namespace NetCoreServer
                 logger.LogError(ex, "Error processing message from {ClientId}", clientId);
 
                 var errorResponse = CreateErrorResponse(string.Empty, ex.Message, Constants.ProcessingErrorReason);
-                await SendResponseAsync(server, identity, errorResponse);
+                await SendResponseAsync(identity, errorResponse);
             }
             finally
             {
@@ -146,7 +198,7 @@ namespace NetCoreServer
             }
         }
 
-        private Task SendResponseAsync(RouterSocket server, NetMQFrame identity, EchoResponse response)
+        private Task SendResponseAsync(NetMQFrame identity, EchoResponse response)
         {
             try
             {
@@ -161,9 +213,12 @@ namespace NetCoreServer
                 logger.LogInformation($"Sending response for request {response.RequestId}");
 
                 // Ensure thread-safe sending
-                lock (server)
+                if (server != null)
                 {
-                    server.SendMultipartMessage(responseMessage);
+                    lock (server)
+                    {
+                        server.SendMultipartMessage(responseMessage);
+                    }
                 }
 
                 logger.LogInformation($"Response sent successfully for request {response.RequestId}");
@@ -208,6 +263,7 @@ namespace NetCoreServer
                     foreach (var clientId in inactiveConnections)
                     {
                         activeConnections.TryRemove(clientId, out _);
+                        connectedClients.TryRemove(clientId, out _);
                         connectionSemaphore.Release();
                         logger.LogInformation($"Cleaned up inactive connection: {clientId}");
                     }
@@ -223,6 +279,88 @@ namespace NetCoreServer
                     logger.LogError(ex, "Error during connection cleanup");
                 }
             }
+        }
+
+        private void TrackClientConnection(NetMQFrame identity)
+        {
+            var clientId = identity.ConvertToString();
+            if (!connectedClients.ContainsKey(clientId))
+            {
+                connectedClients.TryAdd(clientId, identity);
+                logger.LogInformation($"New client connected: {clientId}. Total connected clients: {connectedClients.Count}");
+            }
+        }
+
+        private async Task SendContinuousNotificationsAsync(CancellationToken cancellationToken)
+        {
+            logger.LogInformation("Starting continuous client notification service...");
+
+            var notificationCounter = 0;
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                try
+                {
+                    notificationCounter++;
+                    var notification = new
+                    {
+                        Type = "ContinuousNotification",
+                        Timestamp = DateTime.UtcNow,
+                        Counter = notificationCounter,
+                        Message = $"Server notification #{notificationCounter}",
+                        ServerInfo = new
+                        {
+                            ActiveConnections = activeConnections.Count,
+                            ConnectedClients = connectedClients.Count,
+                            Uptime = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss UTC")
+                        }
+                    };
+
+                    var notificationJson = JsonUtilities.SafeSerialize(notification);
+                    logger.LogInformation($"Sending continuous notification #{notificationCounter} to {connectedClients.Count} clients");
+
+                    // Send notification to all connected clients
+                    foreach (var client in connectedClients.ToList())
+                    {
+                        try
+                        {
+                            var responseMessage = new NetMQMessage();
+                            responseMessage.Append(client.Value);           // Client identity for routing
+                            responseMessage.Append(NetMQFrame.Empty);      // Empty delimiter
+                            responseMessage.Append(notificationJson);      // Notification JSON
+
+                            // Ensure thread-safe sending
+                            if (server != null)
+                            {
+                                lock (server)
+                                {
+                                    server.SendMultipartMessage(responseMessage);
+                                }
+                            }
+
+                            logger.LogDebug($"Sent notification to client: {client.Key}");
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.LogError(ex, $"Failed to send notification to client {client.Key}");
+                            // Remove failed client
+                            connectedClients.TryRemove(client.Key, out _);
+                        }
+                    }
+
+                    await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken); // Wait 5 seconds between notifications
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Error sending continuous notifications");
+                    await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken); // Wait before retrying
+                }
+            }
+
+            logger.LogInformation("Continuous client notification service stopped");
         }
 
         // Helper method to create successful responses
@@ -343,6 +481,7 @@ namespace NetCoreServer
                     ServiceMethodType.MakeAnimalSound => await ProcessMakeAnimalSoundMethodAsync(request),
                     ServiceMethodType.ProcessAnimalGroup => await ProcessAnimalGroupMethodAsync(request),
                     ServiceMethodType.GetAllAnimals => await ProcessGetAllAnimalsAsync(request),
+                    ServiceMethodType.GetAnimalsByType => await ProcessGetAnimalsByTypeAsync(request),
                     _ => CreateErrorResponse(request.RequestId, $"{Constants.UnknownMethodMessage}: {request.Method}", Constants.InvalidMethodReason)
                 };
             }
@@ -614,6 +753,43 @@ namespace NetCoreServer
             });
         }
 
+        private async Task<EchoResponse> ProcessGetAnimalsByTypeAsync(EchoRequest request)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(request.Payload))
+                {
+                    return CreateErrorResponse(request.RequestId, Constants.MissingPayloadMessage, Constants.InvalidPayloadReason);
+                }
+                var animalType = JsonUtilities.SafeDeserialize<AnimalType>(request.Payload);
+                var animals = await echoService.GetAnimalsByType(animalType);
+                var result = JsonUtilities.SafeSerialize(animals);
+                return CreateSuccessResponse(request.RequestId, result);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error getting animals by type");
+                return CreateErrorResponse(request.RequestId, ex.Message, Constants.ProcessingErrorReason);
+            }
+        }
+
         #endregion
+
+        public new void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (!disposed && disposing)
+            {
+                publisher?.Dispose();
+                connectionSemaphore?.Dispose();
+                server?.Dispose();
+                disposed = true;
+            }
+        }
     }
 }
